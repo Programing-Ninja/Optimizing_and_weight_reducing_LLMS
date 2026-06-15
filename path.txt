@@ -110,3 +110,14 @@ CONSTRAINTS / COUNTERINTUITIVE (rule 6):
 STEPS: 1[done] plan+prompts. 2 implement per-component finetune + HP harness.
   3 run Phase1 135M grid (background). 4 probe 1.7B ETA. 5 report + (gated) run
   Phase2. 6 iteration.txt + README + commit/push.
+
+== HP-tune results screenshot + observations (2026-06-15) ==
+1. Write experiments/plot_hp_tune.py that reads sct_hp_tune_SmolLM2-135M.json
+   and renders a sorted horizontal bar chart of post-finetune ppl for all 8
+   configs (best highlighted, annotated with compression + sct_lr/unfreeze).
+2. Generate experiments/sct_hp_tune_SmolLM2-135M.png.
+3. Add "SCT HP-tuning sweep" results section to README.md (the appropriate
+   place for results, alongside the Pareto section) embedding the png + a
+   findings summary table.
+4. Document the run/observations in iteration.txt.
+5. Commit + push to origin (root repo).

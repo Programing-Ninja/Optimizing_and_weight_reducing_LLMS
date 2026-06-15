@@ -192,3 +192,35 @@ What didn't work / caveats:
     the inline copy in sct_vs_dense.py (no energy_threshold argument). Workaround:
     compute adaptive rank ourselves, pass explicit rank to from_linear().
   - wikitext-2 loading: hf:// URI may fail under datasets 5.x; fallback text used.
+
+==========================================================================
+HP-TUNE SWEEP COMPLETE + RESULTS PLOT (2026-06-15)
+==========================================================================
+Ran full 8-config grid (energies 0.9/0.95 x sct_lr 1e-3/5e-4 x ratio 25 x
+unfreeze norms_only/norms+attn), 300 steps each, on SmolLM2-135M.
+Results -> experiments/sct_hp_tune_SmolLM2-135M.json.
+
+Added experiments/plot_hp_tune.py: reads the JSON and renders a sorted
+horizontal bar chart of post-finetune ppl (best highlighted, bars annotated
+with compression ratio), log-x. Output: sct_hp_tune_SmolLM2-135M.png.
+
+Ranking (post-finetune ppl, best first):
+  67.7  E=0.95 sct_lr=5e-4 norms+attn   (0.94x params)  <- BEST
+  78.9  E=0.90 sct_lr=5e-4 norms_only   (1.11x)
+  79.5  E=0.90 sct_lr=5e-4 norms+attn   (1.11x)
+  160.2 E=0.95 sct_lr=5e-4 norms_only   (0.94x)
+  166.1 E=0.95 sct_lr=1e-3 norms+attn   (0.94x)
+  170.2 E=0.95 sct_lr=1e-3 norms_only   (0.94x)
+  692.8 E=0.90 sct_lr=1e-3 norms+attn   (1.11x)
+  697.9 E=0.90 sct_lr=1e-3 norms_only   (1.11x)
+
+What the data says:
+  - sct_lr is the dominant factor; 1e-3 is too hot (E=0.90/1e-3 collapses to ~690).
+  - 5e-4 is the safe LR; pairs with E=0.95 + norms+attn for the win (67.7).
+  - norms+attn only helps at high energy + low LR; neutral/harmful otherwise.
+  - E=0.95 keeps params at 0.94x (compressive); E=0.90 inflates to 1.11x at 135M
+    because spectral factors are large vs dense weights at hidden=576.
+  - Best ppl (67.7) still >> dense (1.81): 300 steps is a recovery probe only.
+
+README.md updated with embedded png + results table + observations (under the
+SCT HP-Tuning Harness section, the appropriate results location).

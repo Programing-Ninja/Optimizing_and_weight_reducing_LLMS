@@ -114,3 +114,42 @@ Saves all results + best recipe to `sct_hp_tune_{model_tag}.json`.
 
 **Outputs:**
 - `experiments/sct_hp_tune_{model_tag}.json` — all grid results + best recipe
+
+**Plot the results:**
+```bash
+experiments/run.sh experiments/plot_hp_tune.py
+# -> experiments/sct_hp_tune_SmolLM2-135M.png
+```
+
+#### Results — SmolLM2-135M sweep (8 configs, 300 steps each)
+
+![SCT HP-tuning sweep](experiments/sct_hp_tune_SmolLM2-135M.png)
+
+| energy | sct_lr | unfreeze    | params | post-FT ppl |
+|:------:|:------:|:------------|:------:|:-----------:|
+| 0.95   | 5e-4   | norms+attn  | 0.94x  | **67.7**    |
+| 0.90   | 5e-4   | norms_only  | 1.11x  | 78.9        |
+| 0.90   | 5e-4   | norms+attn  | 1.11x  | 79.5        |
+| 0.95   | 5e-4   | norms_only  | 0.94x  | 160.2       |
+| 0.95   | 1e-3   | norms+attn  | 0.94x  | 166.1       |
+| 0.95   | 1e-3   | norms_only  | 0.94x  | 170.2       |
+| 0.90   | 1e-3   | norms+attn  | 1.11x  | 692.8       |
+| 0.90   | 1e-3   | norms_only  | 1.11x  | 697.9       |
+
+**Observations:**
+- **Best recipe: energy 0.95, sct_lr 5e-4, lr_ratio 25, unfreeze norms+attn → ppl 67.7.**
+  This is the only sub-70 config and beats the next best by ~15%.
+- **sct_lr is the dominant knob.** Dropping sct_lr from 1e-3 to 5e-4 helps everywhere;
+  at energy 0.90 it is the difference between recovery (≈79 ppl) and collapse (≈690 ppl).
+  1e-3 is too aggressive for the spectral factors here.
+- **Higher energy (0.95) needs the right LR.** With sct_lr 5e-4 it wins outright (67.7),
+  but with 1e-3 it lands at ~166–170 — still far better than energy-0.90/1e-3's ~690s.
+- **Unfreezing attention helps only at low LR / high energy.** norms+attn is best in the
+  winning row, but at energy 0.90 it gives no real gain over norms_only, and pairing it
+  with sct_lr 1e-3 produces the worst result.
+- **Compression caveat persists at 135M.** energy 0.95 keeps params *below* dense (0.94x)
+  while energy 0.90 actually *inflates* them to 1.11x — at hidden_dim=576 the spectral
+  factors are large relative to the dense weights (see CLAUDE.md), so the best-quality
+  config also happens to be the only compressive one here. Real weight savings need ≥1.7B.
+- Even the best post-finetune ppl (67.7) is well above dense (1.81); 300 steps on 500
+  samples is a recovery probe, not a full retrain. The recipe ranking is the takeaway.

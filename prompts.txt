@@ -48,3 +48,5 @@ parameters wouldnt we? to get the best out of SCT, dont forget to follow the rul
 Tasks A-E: (A) finetune_sct() in sct_finetune.py, (B) sct_hp_tune.py grid harness,
 (C) wire real finetune into sct_tq_pareto.py, (D) --probe timing mode,
 (E) smoke validate on 135M. Confirmed 44x ppl improvement (6318->144) in 120 steps.
+
+[2026-06-15] upload a new screenshot for the hp_tune result to github and make a summary of the observations in the appropriate place
