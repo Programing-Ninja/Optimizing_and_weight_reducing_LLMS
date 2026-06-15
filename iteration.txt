@@ -1,0 +1,129 @@
+================================================================================
+ITERATION LOG — SCT x TurboQuant Pareto Experiment
+Date: 2026-06-15
+================================================================================
+
+--- ENVIRONMENT BUILD ---
+
+What was done:
+  Created /scratch/DA24B039/sct_tq/.venv from /opt/miniconda3/bin/python (3.13.12).
+  Installed CPU-only PyTorch 2.12.0 from https://download.pytorch.org/whl/cpu.
+  Installed transformers 5.12.0, datasets 5.0.0, numpy, matplotlib, psutil, accelerate.
+  Installed SCT (spectral_compact_training) and turboquant as editable packages.
+
+libstdc++ situation:
+  The existing SCT/env conda env was BROKEN (torch import failed: CXXABI_1.3.15).
+  Fresh venv from /opt/miniconda3/bin/python did NOT reproduce the CXXABI error —
+  the conda Python 3.13 linked against a newer libstdc++ so torch 2.12 imports
+  cleanly even without LD_LIBRARY_PATH override.
+  Created /scratch/DA24B039/sct_tq/experiments/run.sh as a precautionary launcher
+  that sets LD_LIBRARY_PATH=/opt/miniconda3/lib in case the issue reappears.
+
+Verification:
+  `import torch, transformers, datasets, spectral_compact_training, turboquant`
+  all succeed in the venv without LD_LIBRARY_PATH set.
+
+--- EXPERIMENT FILE ---
+
+File: /scratch/DA24B039/sct_tq/experiments/sct_tq_pareto.py
+
+What it does:
+  Sweeps SCT energy {None=dense, 0.99, 0.95, 0.90, 0.80} x TurboQuant KV configs
+  {fp16-full, (k=4,v=4), (k=3,v=4), (k=3,v=2), (k=2,v=2)} on SmolLM2-135M.
+
+  SCT: replaces MLP nn.Linear layers (gate_proj/up_proj/down_proj) with
+  SpectralLinear.from_linear() at the given energy threshold. This does a
+  truncated SVD and stores W = U diag(s) V^T. At 135M scale this rarely
+  compresses — see COUNTERINTUITIVE section below.
+
+  KV compression: uses a DynamicLayer subclass (TurboQuantLayer) that intercepts
+  the transformers 5.x cache layer update() call, compresses keys via
+  TurboQuantProd and values via quantize_values (group quantization), stores
+  compressed tensors, and returns dequantized full-history K and V for attention.
+  The Cache subclass approach WORKED — no fallback needed.
+
+  Per config: measures perplexity, weight bytes, compressed KV bytes, peak RSS,
+  and tokens/sec. Computes Pareto frontier (non-dominated on all 4 axes).
+  Saves results to experiments/sct_tq_pareto_results.json.
+  Saves scatter plot to experiments/sct_tq_pareto.png.
+
+--- SMOKE TEST RESULTS ---
+
+Command: python experiments/sct_tq_pareto.py --quick --max-tokens 128
+  (quick = dense + E=0.95 only; fp16-KV + TQ(k=3,v=4) configs; 128 eval tokens)
+
+Results:
+  Config                           PPL     Weight  KV-KB  Total-MB  tok/s
+  dense + fp16-KV                  22.76   538MB   2949KB  541MB    1400
+  dense + TQ(k=3,v=4)             81.82   538MB    783KB   539MB     702
+  E=0.95 + fp16-KV             16944.76   557MB   2949KB  560MB    1141
+  E=0.95 + TQ(k=3,v=4)       134095.41   557MB    783KB   558MB     797
+
+  Pareto frontier: dense+fp16-KV and dense+TQ(k=3,v=4) are the two non-dominated.
+
+TQ KV compression achieved: 2949KB -> 783KB = 3.77x bytes reduction for k=3,v=4.
+TQ perplexity cost: 22.76 -> 81.82 (3.6x PPL degradation at 128 tokens, 30 layers).
+  This is high but expected at 128 tokens with full-prefill compression — every
+  single key/value is compressed from the start; at longer sequences the first
+  tokens matter less.
+
+--- WHAT WORKED ---
+
+- Fresh venv build: clean, no libstdc++ issues with py3.13 + torch 2.12 CPU.
+- DynamicLayer subclass (TurboQuantLayer) worked on transformers 5.x.
+- SpectralLinear.from_linear() applied cleanly to 90 MLP layers.
+- TurboQuantProd key compression and group value quantization are functional.
+- Pareto frontier computation and matplotlib plot work.
+- Results JSON saved correctly.
+
+--- WHAT DIDN'T WORK / COUNTERINTUITIVE FINDINGS ---
+
+1. SCT gives NEGATIVE weight compression on SmolLM2-135M at E=0.95:
+   MLP params 79.6M -> 84.3M (0.94x, i.e. 6% LARGER). This confirms the
+   CLAUDE.md warning: hidden_dim=576 << 2048; MLP layers are too small for
+   SVD factors to compress. The SVD adds U, s, V overhead that exceeds savings.
+
+2. SCT severely degrades perplexity post-hoc (without finetuning):
+   22.76 -> 16945 at E=0.95 (without finetune). This is expected — applying
+   SVD truncation without finetune to a converged model destroys quality.
+   The --finetune-steps flag would recover quality but was not tested.
+
+3. TurboQuant perplexity impact is larger than expected at 128 tokens:
+   This is because for short sequences, every key gets compressed (no buffer).
+   At longer sequences (768+ tokens) the PPL impact should be smaller in relative
+   terms since early tokens matter less for the later predictions.
+
+4. Wikitext-2 dataset loading fails (HF URI format changed in datasets 5.x):
+   "Invalid HF URI 'hf://datasets/wikitext@b08601e04326c79dfdd32d625aee71d232d685c3/...'"
+   Fallback to hardcoded English text works; results are internally consistent.
+
+5. TurboQuant latency INCREASES vs dense baseline (1400 tok/s -> 702 tok/s):
+   As documented in CLAUDE.md, dequantizing history to float32 on every decode
+   step adds overhead. CPU TurboQuant decode is slower than plain fp16 matmul.
+
+--- NEXT STEPS ---
+- Run full sweep (--max-tokens 768, all energies + TQ configs) on a proper machine.
+- Add --finetune-steps 200 to see SCT recovery on a model with hidden_dim>=2048.
+- Consider testing SmolLM2-1.7B for meaningful SCT weight compression.
+================================================================================
+
+=== [2026-06-15] FULL SWEEP RESULTS (sct_tq_pareto.py --max-tokens 768) ===
+25 configs (5 energies x 5 KV), 12 Pareto-optimal. CPU, SmolLM2-135M, 768 tok.
+Eval text: hardcoded fallback (wikitext load broke under datasets 5.x hf:// URI).
+
+Key points (no finetune):
+  dense + fp16-KV    : ppl=3.7    KV=17280KB  tok/s=1538   <- quality ceiling
+  dense + TQ(4,4)    : ppl=6.5    KV=5670KB   tok/s=984    <- best q/compression tradeoff (3.0x KV)
+  dense + TQ(3,2)    : ppl=64.7   KV=3510KB   tok/s=989    (4.9x KV)
+  dense + TQ(2,2)    : ppl=1240   KV=2970KB                (5.8x KV)
+
+SCT MLP "compression" at 135M (hidden=576): E=0.99 -> 0.79x (BIGGER), E=0.95 -> 0.94x
+(BIGGER), E=0.9 -> 1.11x, only shrinks below E~0.9. Post-hoc (no finetune) ppl
+explodes: E=0.99=26.9, E=0.95=9729, E=0.9=145k. Confirms CLAUDE.md: SCT needs
+hidden>=2048 AND/OR finetuning to land on the frontier.
+
+CONCLUSION: At 135M the Pareto frontier is driven entirely by TurboQuant KV
+compression on the *dense* model. SCT contributes nothing here without finetune /
+a larger model. Next: rerun with --finetune-steps to give SCT a fair shot, and/or
+switch --model to a 1.7B for real SCT weight savings.
+Outputs: experiments/sct_tq_pareto_results.json, sct_tq_pareto.png, sweep_full.log

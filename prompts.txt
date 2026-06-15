@@ -20,3 +20,16 @@ to do for the experiment."
    CXXABI_1.3.15 missing; GPU driver mismatch -> CPU-only). Experiment:
    experiments/sct_tq_pareto.py sweeping SCT energy x TQ key/value bits, measuring
    compression / RAM / latency / perplexity -> Pareto frontier.
+
+[2026-06-15] (implementation prompt)
+"You are implementing a pre-designed experiment in /scratch/DA24B039/sct_tq. The PLAN is already written in /scratch/DA24B039/sct_tq/path.txt — read it first. Do NOT redesign; implement exactly. [...]"
+-> Tasks 1-4 completed:
+   TASK 1: Built /scratch/DA24B039/sct_tq/.venv from /opt/miniconda3/bin/python (3.13),
+           installed torch 2.12 CPU, transformers 5.12, datasets, numpy, matplotlib,
+           psutil, accelerate, spectral_compact_training, turboquant (editable).
+           No libstdc++ fix needed (py3.13 links newer runtime). run.sh created precautionarily.
+   TASK 2: Wrote experiments/sct_tq_pareto.py — full sweep with TurboQuantLayer
+           (DynamicLayer subclass) for KV compression, SCT energy sweep, Pareto frontier.
+   TASK 3: Smoke test passed: --quick --max-tokens 128 produced JSON results.
+           ppl dense=22.76, dense+TQ(k=3,v=4)=81.82, weight=538MB, TQ-KV=783KB.
+   TASK 4: Created iteration.txt, updated README.md with Experiments section.
