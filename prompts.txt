@@ -1,0 +1,22 @@
+=== PROMPT LOG (CLAUDE.md rule 2) ===
+
+[2026-06-15] (env setup, prior turn)
+"did you make the env and make permissions as it was supposed to have"
+-> Found .env.example template + gitignore protection; no real .env existed.
+
+[2026-06-15] (env setup, prior turn)
+"create the .env and chmod 600 it"
+-> Created /scratch/DA24B039/sct_tq/.env from template, chmod 600.
+
+[2026-06-15] CURRENT PROMPT
+"Now the task is to combine SCT and TQ at the same time for different energies
+and essentially get the pareto frontier for when the compression, ram usage,
+latencies and accuracy are the best. Create an experiment file for that, also
+verify if the environment is conducive to run the experiment, else make a new
+virtual environment with all the requirements. also dont forget to follow the
+rules of CLAUDE.md and switch to a lighter model once you have mapped out what
+to do for the experiment."
+-> Plan written to path.txt. Building fresh venv (existing SCT/env torch is broken:
+   CXXABI_1.3.15 missing; GPU driver mismatch -> CPU-only). Experiment:
+   experiments/sct_tq_pareto.py sweeping SCT energy x TQ key/value bits, measuring
+   compression / RAM / latency / perplexity -> Pareto frontier.

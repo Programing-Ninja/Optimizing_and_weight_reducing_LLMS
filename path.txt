@@ -1,0 +1,68 @@
+=== PLAN: SCT x TurboQuant joint Pareto frontier (CLAUDE.md rule 3) ===
+Date: 2026-06-15   Author model: Opus (planning) -> Sonnet (implementation)
+
+GOAL
+----
+Combine SCT (training/weight-side compression) with TurboQuant (inference KV-cache
+compression) on ONE model, sweep the knobs, and trace the Pareto frontier across
+four axes: (1) compression, (2) RAM usage, (3) latency, (4) accuracy.
+
+ENVIRONMENT DECISION
+--------------------
+- Existing SCT/env (conda py3.10): torch import FAILS (CXXABI_1.3.15 not found ->
+  loads system libstdc++ instead of conda's). NOT usable as-is.
+- Base conda py3.13: no torch.
+- GPU: nvidia-smi "Driver/library version mismatch" -> CUDA unusable. CPU-ONLY.
+- ACTION: build a fresh venv at experiments/.venv (or sct_tq/.venv) from conda
+  python, install CPU torch + transformers + datasets + numpy + matplotlib, then
+  `pip install -e` both SCT and turboquant. Ensure conda libstdc++ is found
+  (LD_LIBRARY_PATH=/opt/miniconda3/lib) -> wrap run in a small launcher if needed.
+
+EXPERIMENT DESIGN  (experiments/sct_tq_pareto.py)
+-------------------------------------------------
+Model: HuggingFaceTB/SmolLM2-135M (CPU-feasible, matches existing examples). Configurable.
+
+Knobs swept:
+  - SCT energy E in {none(dense), 0.99, 0.95, 0.90, 0.80}
+      * energy controls adaptive rank of SpectralLinear on MLP layers (from_linear).
+      * "none" = unmodified dense model (baseline point).
+  - TQ KV config in {none(fp16), (key_bits=4,val_bits=4), (3,4), (3,2), (2,2)}
+      * Implement a transformers Cache subclass `TurboQuantCache` that compresses
+        K via TurboQuantProd, V via group quantize_values on update(), stores
+        compressed, returns dequantized K/V for attention. Gives REAL perplexity
+        impact + REAL compressed byte counts.
+
+Per (energy x TQ) config, measure:
+  - compression: weight_bytes (SCT factors vs dense) + peak KV_bytes (TQ compressed
+    vs fp16 baseline) -> overall bytes & ratio vs dense-fp16.
+  - RAM: peak process RSS during a fixed eval workload (resource.getrusage / psutil).
+  - latency: tokens/sec (prefill+decode) over a fixed generation length.
+  - accuracy: perplexity on a fixed held-out text slice (wikitext-2 sample or the
+    alpaca slice already used by examples). Lower = better.
+
+Output:
+  - experiments/sct_tq_pareto_results.json  (all points + config)
+  - Pareto frontier computed for (accuracy vs each cost axis); printed table.
+  - Optional matplotlib scatter w/ frontier -> experiments/sct_tq_pareto.png.
+
+Default fast mode: NO finetune (measure post-hoc truncation+quant quality). Flag
+--finetune-steps N to optionally recover SCT accuracy per energy.
+
+COUNTERINTUITIVE NOTES (CLAUDE.md rule 6) -- to surface to user:
+  1. SmolLM2-135M hidden dim = 576 (< 2048). Per CLAUDE.md, SCT compresses best at
+     hidden >= 2048; at 135M, high-energy SCT yields little/negative weight savings.
+     Pareto will show this. Model is configurable to a 1.7B model if a real win is
+     wanted (but heavy on CPU).
+  2. TQ hybrid decode dequantizes history to float32 -> KV MEMORY savings are real,
+     but COMPUTE/latency savings are NOT realized (may add overhead). Latency axis
+     mostly reflects SCT MLP FLOP reduction + TQ overhead. Report honestly.
+
+STEPS
+-----
+1. [done] map APIs (SpectralLinear.from_linear, TurboQuantProd, quantize_values,
+   TurboQuantKVCache), env probe, write prompts.txt + path.txt.
+2. git: commit/push prior work (CLAUDE.md rule 1).
+3. Build fresh venv + install deps (lighter model).
+4. Write experiments/sct_tq_pareto.py (lighter model).
+5. Smoke test (1 energy x 1 TQ config, tiny eval) -> fix import/shape bugs.
+6. Document in iteration.txt (rule 4), update README.md (rule 5), commit/push.
