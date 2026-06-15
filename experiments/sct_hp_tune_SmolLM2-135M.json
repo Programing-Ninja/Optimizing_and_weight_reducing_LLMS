@@ -1,0 +1,64 @@
+{
+  "model": "HuggingFaceTB/SmolLM2-135M",
+  "grid": {
+    "energies": [
+      0.95
+    ],
+    "sct_lrs": [
+      0.0005
+    ],
+    "lr_ratios": [
+      25.0
+    ],
+    "unfreeze": [
+      "norms+attn"
+    ],
+    "steps": 120
+  },
+  "best": {
+    "energy": 0.95,
+    "sct_lr": 0.0005,
+    "lr_ratio": 25.0,
+    "unfreeze": "norms+attn",
+    "label": "E=0.95 | sct_lr=5e-04 | ratio=25 | norms+attn",
+    "pre_ppl": 3.1532,
+    "n_replaced": 90,
+    "dense_params": 79626240,
+    "spectral_params": 84298135,
+    "compression": 0.945,
+    "post_sct_ppl": 6318.4746,
+    "ft_final_loss": 3.08836,
+    "ft_final_ppl": 21.941,
+    "ft_steps": 120,
+    "ft_time_sec": 178.84,
+    "ft_sct_params": 84298135,
+    "ft_dense_params": 26577216,
+    "post_ft_ppl": 144.6343,
+    "ppl": 144.6343,
+    "error": null
+  },
+  "results": [
+    {
+      "energy": 0.95,
+      "sct_lr": 0.0005,
+      "lr_ratio": 25.0,
+      "unfreeze": "norms+attn",
+      "label": "E=0.95 | sct_lr=5e-04 | ratio=25 | norms+attn",
+      "pre_ppl": 3.1532,
+      "n_replaced": 90,
+      "dense_params": 79626240,
+      "spectral_params": 84298135,
+      "compression": 0.945,
+      "post_sct_ppl": 6318.4746,
+      "ft_final_loss": 3.08836,
+      "ft_final_ppl": 21.941,
+      "ft_steps": 120,
+      "ft_time_sec": 178.84,
+      "ft_sct_params": 84298135,
+      "ft_dense_params": 26577216,
+      "post_ft_ppl": 144.6343,
+      "ppl": 144.6343,
+      "error": null
+    }
+  ]
+}

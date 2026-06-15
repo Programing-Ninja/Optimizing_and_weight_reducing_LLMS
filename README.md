@@ -52,3 +52,65 @@ experiments/run.sh experiments/sct_tq_pareto.py --max-tokens 512 --finetune-step
 # PyTorch 2.12.0+cpu, transformers 5.12.0
 # run.sh sets LD_LIBRARY_PATH=/opt/miniconda3/lib (precautionary for CXXABI)
 ```
+
+---
+
+### SCT Per-Component LR Finetune (reusable function)
+
+**File:** `experiments/sct_finetune.py`
+
+Exposes `finetune_sct(model, tokenizer, *, sct_lr, lr_ratio, unfreeze, steps, ...)` — the
+per-component learning rate recipe proven in `sct_per_component_lr.ipynb`. Two param groups:
+- Group B (high lr = sct_lr): U, s, V factors of every SpectralLinear module
+- Group A (low lr = sct_lr / lr_ratio): norm layers + (optionally) q/k/v/o_proj
+
+Returns `{final_loss, final_ppl, steps, time_sec, sct_params, dense_params, loss_curve}`.
+
+**Quick manual test:**
+```bash
+.venv/bin/python experiments/sct_finetune.py \
+  --model HuggingFaceTB/SmolLM2-135M \
+  --energy 0.95 --sct-lr 5e-4 --lr-ratio 25 --steps 120
+```
+
+---
+
+### SCT HP-Tuning Harness
+
+**File:** `experiments/sct_hp_tune.py`
+
+Grid-searches (energy, sct_lr, lr_ratio, unfreeze) for the best per-component LR recipe.
+For each config: loads fresh model, applies SCT at given energy, calls `finetune_sct()`,
+evaluates held-out perplexity on wikitext-2. Prints table sorted by ppl (best first).
+Saves all results + best recipe to `sct_hp_tune_{model_tag}.json`.
+
+**Default grid (small, intended for 135M):**
+```bash
+.venv/bin/python experiments/sct_hp_tune.py \
+  --energies 0.95 \
+  --sct-lrs 1e-3 5e-4 1e-4 \
+  --lr-ratios 25 10 \
+  --unfreeze norms+attn norms_only \
+  --steps 300 --max-eval-tokens 512
+```
+
+**Smoke validation (single config, ~3 min on 135M CPU):**
+```bash
+.venv/bin/python experiments/sct_hp_tune.py \
+  --energies 0.95 --sct-lrs 5e-4 --lr-ratios 25 \
+  --unfreeze norms+attn --steps 120 --max-eval-tokens 256
+# Result: post-SCT ppl 6318 -> post-finetune ppl 144 (44x improvement, 120 steps)
+```
+
+**Probe mode (timing only — no full finetune):**
+```bash
+.venv/bin/python experiments/sct_hp_tune.py \
+  --model HuggingFaceTB/SmolLM2-135M \
+  --energies 0.95 --sct-lrs 5e-4 --lr-ratios 25 --unfreeze norms+attn \
+  --probe
+# 135M: 591 MB load, ~1.48s/step -> 300 steps in ~7.4 min
+# Use with 1.7B to get step budget before committing to long run
+```
+
+**Outputs:**
+- `experiments/sct_hp_tune_{model_tag}.json` — all grid results + best recipe

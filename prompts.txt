@@ -33,3 +33,18 @@ to do for the experiment."
    TASK 3: Smoke test passed: --quick --max-tokens 128 produced JSON results.
            ppl dense=22.76, dense+TQ(k=3,v=4)=81.82, weight=538MB, TQ-KV=783KB.
    TASK 4: Created iteration.txt, updated README.md with Experiments section.
+
+[2026-06-15] PROMPT
+"lets do both of these systematically, also we would need to tune the hyper
+parameters wouldnt we? to get the best out of SCT, dont forget to follow the rules"
+-> Plan in path.txt. Phase 1: HP-tune SCT on 135M (cheap) centered on the repo's
+   known lever = PER-COMPONENT LR (uniform LR -> ppl 65-87; per-component +
+   unfreeze attn -> target <10, per sct_per_component_lr.ipynb). Phase 2: apply
+   best recipe to SmolLM2-1.7B (hidden=2048, where SCT actually compresses) +
+   joint TQ Pareto. CPU-only (GPU dead); 31GB RAM ok for 1.7B; 1.7B finetune
+   speed on CPU is the binding constraint -> measure ETA before committing.
+
+=== [2026-06-15] PROMPT: Implement SCT per-component LR finetune + HP-tuning harness ===
+Tasks A-E: (A) finetune_sct() in sct_finetune.py, (B) sct_hp_tune.py grid harness,
+(C) wire real finetune into sct_tq_pareto.py, (D) --probe timing mode,
+(E) smoke validate on 135M. Confirmed 44x ppl improvement (6318->144) in 120 steps.

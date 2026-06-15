@@ -66,3 +66,47 @@ STEPS
 4. Write experiments/sct_tq_pareto.py (lighter model).
 5. Smoke test (1 energy x 1 TQ config, tiny eval) -> fix import/shape bugs.
 6. Document in iteration.txt (rule 4), update README.md (rule 5), commit/push.
+
+
+=== PLAN v2: Systematic SCT HP-tuning + 1.7B (CLAUDE.md rule 3) ===
+Date: 2026-06-15   Opus(plan) -> Sonnet(impl/run)
+
+WHY: full sweep showed SCT post-hoc (no finetune) is useless (ppl explodes) AND
+gives no weight compression at 135M (hidden=576 < 2048). To put SCT on the
+frontier we must (a) finetune with the RIGHT recipe, (b) move to 1.7B (hidden=2048).
+
+KNOWN LEVER (from SCT/examples/sct_per_component_lr.ipynb): PER-COMPONENT LR.
+  - Uniform LR -> SCT ppl ~65-87 (bad).
+  - Two param groups: {q,k,v,o_proj, *norm} @ LOW_LR (~2e-5) ; {SCT U,s,V} @
+    HIGH_LR (~5e-4), ratio ~25x -> closes gap (target ppl <10).
+  - Unfreeze attention projections too (not just norms). Retract after every step.
+
+PHASE 1 -- HP tuning on SmolLM2-135M (cheap, do exhaustively):
+  Implement real per-component-LR finetune in the experiment code (param groups:
+  sct_factors / attn+norm-dense / rest-frozen). Grid (small, principled):
+    sct_lr   in {1e-3, 5e-4, 1e-4}
+    lr_ratio in {25x, 10x}  (dense_lr = sct_lr / ratio)
+    unfreeze in {norms_only, norms+attn}
+    energy   in {0.90, 0.95}
+    steps    = 300 (fixed), batch 4, seq 128, alpaca (as examples)
+  Metric: post-finetune perplexity on held-out eval. Pick BEST recipe.
+  Output: experiments/sct_hp_tune_135m.json + best recipe printed.
+  NOTE: even best recipe yields ~negative weight compression at 135M -> Phase 1
+  is for the RECIPE, not the Pareto.
+
+PHASE 2 -- SmolLM2-1.7B with best recipe + joint TQ Pareto:
+  - FIRST: probe 1.7B -- load (fp32) RAM, time ONE finetune step on CPU, report
+    ETA for {200,300,500} steps. Do NOT blindly run hours.
+  - Then finetune SCT-1.7B at best recipe (capped steps per ETA/budget), apply TQ
+    KV configs, measure the 4-axis Pareto (compression/RAM/latency/accuracy).
+  - Output: experiments/sct_tq_pareto_1p7b.json (+ png).
+
+CONSTRAINTS / COUNTERINTUITIVE (rule 6):
+  - GPU dead -> CPU only. 1.7B finetune is SLOW; step budget is the lever, gate on
+    measured ETA before running the long job.
+  - 135B... no: 135M can never show good weight compression; don't judge SCT there.
+  - Per-component LR is the whole ballgame for SCT accuracy -- center tuning there.
+
+STEPS: 1[done] plan+prompts. 2 implement per-component finetune + HP harness.
+  3 run Phase1 135M grid (background). 4 probe 1.7B ETA. 5 report + (gated) run
+  Phase2. 6 iteration.txt + README + commit/push.

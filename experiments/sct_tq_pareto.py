@@ -48,6 +48,20 @@ from transformers.cache_utils import DynamicCache, DynamicLayer, CacheLayerMixin
 from turboquant.quantizer import TurboQuantProd, ProdQuantized
 from turboquant.kv_cache import quantize_values, dequantize_values, ValueQuantized
 
+# SCT finetune (optional — only imported when --finetune-steps > 0)
+_sct_finetune_fn = None
+
+def _get_finetune_fn():
+    global _sct_finetune_fn
+    if _sct_finetune_fn is None:
+        _HERE = os.path.dirname(os.path.abspath(__file__))
+        _ROOT = os.path.dirname(_HERE)
+        if os.path.isdir(os.path.join(_ROOT, "SCT")):
+            sys.path.insert(0, os.path.join(_ROOT, "SCT"))
+        from sct_finetune import finetune_sct
+        _sct_finetune_fn = finetune_sct
+    return _sct_finetune_fn
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  SCT UTILITIES (adapted from SCT/examples/sct_vs_dense.py)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -609,6 +623,13 @@ def main():
                    help="SCT energies to sweep (default: None 0.99 0.95 0.90 0.80)")
     p.add_argument("--finetune-steps", type=int, default=0,
                    help="SCT finetune steps per energy (0 = no finetune)")
+    p.add_argument("--sct-lr", type=float, default=5e-4,
+                   help="SCT factor learning rate for finetune (default 5e-4)")
+    p.add_argument("--lr-ratio", type=float, default=25.0,
+                   help="LR ratio sct_lr/dense_lr for finetune (default 25)")
+    p.add_argument("--unfreeze", default="norms+attn",
+                   choices=["norms_only", "norms+attn"],
+                   help="Which dense params to unfreeze during finetune")
     p.add_argument("--device", default="cpu")
     p.add_argument("--quick", action="store_true",
                    help="Quick mode: only dense + one TQ config, for smoke testing")
@@ -690,8 +711,29 @@ def main():
 
         # Finetune if requested (optional)
         if args.finetune_steps > 0 and energy is not None:
-            print(f"  [finetune skipped in smoke test; --finetune-steps={args.finetune_steps} "
-                  f"requested but not implemented in quick run]")
+            print(f"  Finetuning SCT model ({args.finetune_steps} steps, "
+                  f"sct_lr={args.sct_lr:.2e}, lr_ratio={args.lr_ratio:.0f}, "
+                  f"unfreeze={args.unfreeze})...")
+            finetune_sct = _get_finetune_fn()
+            # Need tokenizer for finetune_sct (already loaded above as `tokenizer`)
+            ft_result = finetune_sct(
+                model,
+                tokenizer,
+                sct_lr=args.sct_lr,
+                lr_ratio=args.lr_ratio,
+                unfreeze=args.unfreeze,
+                steps=args.finetune_steps,
+                batch_size=4,
+                max_seq_len=128,
+                max_samples=500,
+                device=device,
+                log_every=50,
+                seed=42,
+            )
+            print(f"  Finetune done: loss={ft_result['final_loss']:.4f}, "
+                  f"ppl={ft_result['final_ppl']:.2f}, "
+                  f"time={ft_result['time_sec']:.1f}s")
+            model.eval()
 
         for tq_key_bits, tq_val_bits in tq_sweep:
             tq_label = (f"TQ(k={tq_key_bits},v={tq_val_bits})"

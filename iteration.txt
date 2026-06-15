@@ -127,3 +127,68 @@ compression on the *dense* model. SCT contributes nothing here without finetune 
 a larger model. Next: rerun with --finetune-steps to give SCT a fair shot, and/or
 switch --model to a 1.7B for real SCT weight savings.
 Outputs: experiments/sct_tq_pareto_results.json, sct_tq_pareto.png, sweep_full.log
+
+=== [2026-06-15] TASK: Per-component LR finetune + HP-tuning harness ===
+
+What was implemented:
+  experiments/sct_finetune.py:
+    - finetune_sct() function: two AdamW param groups (SCT factors at sct_lr,
+      dense group at dense_lr = sct_lr / lr_ratio), cosine schedule w/ short
+      warmup (min(20, steps//5)), grad clip 1.0, retract_all after every step.
+    - Param groups: walk model.modules() for SpectralLinear -> collect m.U, m.s,
+      m.V (group B, high lr). For group A: norm layers (all unfreeze modes) +
+      q/k/v/o_proj linear layers (unfreeze=="norms+attn" only).
+    - Data: tatsu-lab/alpaca, 500 samples, seq 128, formatted as alpaca template.
+    - Returns {final_loss, final_ppl, steps, time_sec, sct_params, dense_params,
+      loss_curve}.
+
+  experiments/sct_hp_tune.py:
+    - CLI: --energies, --sct-lrs, --lr-ratios, --unfreeze, --steps,
+      --max-eval-tokens, --probe.
+    - Grid sweep: for each config: load fresh model, apply SCT (adaptive rank via
+      SVD), measure pre-SCT ppl, measure post-SCT ppl, call finetune_sct(),
+      measure post-finetune ppl on wikitext-2 eval text. try/except per config.
+    - Results table sorted by ppl; saves JSON to sct_hp_tune_{model_tag}.json.
+    - --probe mode: load model, apply SCT, run 3 steps, report RAM delta and
+      per-step timing with projections for 200/300/500 steps.
+
+  experiments/sct_tq_pareto.py (Task C wire-in):
+    - Added --sct-lr (default 5e-4), --lr-ratio (default 25), --unfreeze (default
+      norms+attn) argparse args.
+    - Replaced stub "finetune skipped" comment with real finetune_sct() call.
+    - Lazy import via _get_finetune_fn() so no breakage when --finetune-steps==0.
+
+Bug fixed during implementation:
+  - Installed spectral_compact_training.SpectralLinear.from_linear() takes `rank`
+    only (no energy_threshold). Implemented _adaptive_rank() helper (SVD-based)
+    in sct_hp_tune.py and sct_finetune.py to compute k from energy threshold,
+    then pass explicit rank to from_linear().
+
+SMOKE VALIDATION (Task E):
+  SmolLM2-135M, energy=0.95, sct_lr=5e-4, lr_ratio=25, unfreeze=norms+attn, 120 steps
+  Pre-SCT (dense) ppl:      3.15
+  Post-SCT, no finetune:    6318.47
+  Post-finetune (120 steps): 144.63
+  Improvement vs no-finetune: 44x (from 6318 -> 144). Previous baseline was 9729.
+  Training loss still declining at step 120 (3.24), more steps would close gap further.
+  Step time on 135M CPU: ~1.49s/step
+
+PROBE MODE RESULTS (135M):
+  Model load RAM delta: 591 MB
+  Per-step time (mean): 1.48s
+  Projected: 200 steps=297s (5 min), 300 steps=445s (7.4 min), 500 steps=742s (12.4 min)
+
+What worked:
+  - Per-component LR recipe works: finetune drops ppl from 6318 to 144 in 120 steps.
+  - retract_all() is called after every step (critical).
+  - Probe mode correctly reports load time, RAM, and per-step projections.
+  - try/except wrapper in grid loop prevents one failure killing the sweep.
+
+What didn't work / caveats:
+  - 135M post-finetune ppl (144) still much higher than dense (3.15). At 135M
+    (hidden=576), high-rank SCT factors dominate param count (more params than
+    dense!). More steps + possibly lower energy would help.
+  - The installed spectral_compact_training from_linear() has a different API than
+    the inline copy in sct_vs_dense.py (no energy_threshold argument). Workaround:
+    compute adaptive rank ourselves, pass explicit rank to from_linear().
+  - wikitext-2 loading: hf:// URI may fail under datasets 5.x; fallback text used.
