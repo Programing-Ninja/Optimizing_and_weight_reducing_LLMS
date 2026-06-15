@@ -1,0 +1,173 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+======================================================================
+  SCT HP-Tuning Grid: HuggingFaceTB/SmolLM2-135M
+  Energies:    [0.9, 0.95]
+  SCT LRs:     [0.001, 0.0005]
+  LR ratios:   [25.0]
+  Unfreeze:    ['norms_only', 'norms+attn']
+  Steps:       300
+  Max eval tokens: 512
+======================================================================
+
+  Loading tokenizer for eval...
+  Loading eval text (512 tokens)...
+  Eval tokens: 512
+
+  Grid size: 8 configs
+
+
+──────────────────────────────────────────────────────────────────────
+  Config 1/8: E=0.9 | sct_lr=1e-03 | ratio=25 | norms_only
+──────────────────────────────────────────────────────────────────────
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 8099.58it/s]
+  Measuring pre-finetune ppl...
+  Pre-finetune ppl: 1.81
+  Applying SCT (energy=0.9)...
+  90 layers replaced, compression=1.11x
+  Measuring post-SCT (pre-finetune) ppl...
+  Post-SCT ppl: 119677.21
+  [finetune] Loading data (max_samples=500, seq_len=128)...
+  [finetune] 500 samples loaded
+  [finetune] sct_lr=1.00e-03, dense_lr=4.00e-05 (ratio=25x), unfreeze=norms_only
+  [finetune] SCT factor params: 71,603,231 | Dense group params: 35,136
+  [finetune] step    1/300 | loss 12.1378 | ppl 186803.0 | 1.4s
+  [finetune] step   50/300 | loss 8.2557 | ppl 3849.5 | 62.4s
+  [finetune] step  100/300 | loss 6.2692 | ppl 528.0 | 124.8s
+  [finetune] step  150/300 | loss 5.8327 | ppl 341.3 | 187.7s
+  [finetune] step  200/300 | loss 5.3365 | ppl 207.8 | 251.6s
+  [finetune] step  250/300 | loss 4.9397 | ppl 139.7 | 315.5s
+  [finetune] step  300/300 | loss 4.2786 | ppl 72.1 | 380.5s
+  [finetune] Done: 300 steps in 380.5s | final_loss=4.3037 | final_ppl=73.97
+  Measuring post-finetune ppl...
+  Post-finetune ppl: 697.91
+
+──────────────────────────────────────────────────────────────────────
+  Config 2/8: E=0.9 | sct_lr=1e-03 | ratio=25 | norms+attn
+──────────────────────────────────────────────────────────────────────
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 7255.20it/s]
+  Measuring pre-finetune ppl...
+  Pre-finetune ppl: 1.81
+  Applying SCT (energy=0.9)...
+  90 layers replaced, compression=1.11x
+  Measuring post-SCT (pre-finetune) ppl...
+  Post-SCT ppl: 119677.21
+  [finetune] Loading data (max_samples=500, seq_len=128)...
+  [finetune] 500 samples loaded
+  [finetune] sct_lr=1.00e-03, dense_lr=4.00e-05 (ratio=25x), unfreeze=norms+attn
+  [finetune] SCT factor params: 71,603,231 | Dense group params: 26,577,216
+  [finetune] step    1/300 | loss 12.1378 | ppl 186803.0 | 1.4s
+  [finetune] step   50/300 | loss 8.2720 | ppl 3912.9 | 70.7s
+  [finetune] step  100/300 | loss 6.4870 | ppl 656.6 | 141.6s
+  [finetune] step  150/300 | loss 5.9234 | ppl 373.7 | 212.9s
+  [finetune] step  200/300 | loss 5.4546 | ppl 233.8 | 284.7s
+  [finetune] step  250/300 | loss 4.9626 | ppl 143.0 | 357.0s
+  [finetune] step  300/300 | loss 4.3115 | ppl 74.6 | 430.2s
+  [finetune] Done: 300 steps in 430.2s | final_loss=4.3289 | final_ppl=75.86
+  Measuring post-finetune ppl...
+  Post-finetune ppl: 692.80
+
+──────────────────────────────────────────────────────────────────────
+  Config 3/8: E=0.9 | sct_lr=5e-04 | ratio=25 | norms_only
+──────────────────────────────────────────────────────────────────────
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 7493.12it/s]
+  Measuring pre-finetune ppl...
+  Pre-finetune ppl: 1.81
+  Applying SCT (energy=0.9)...
+  90 layers replaced, compression=1.11x
+  Measuring post-SCT (pre-finetune) ppl...
+  Post-SCT ppl: 119677.21
+  [finetune] Loading data (max_samples=500, seq_len=128)...
+  [finetune] 500 samples loaded
+  [finetune] sct_lr=5.00e-04, dense_lr=2.00e-05 (ratio=25x), unfreeze=norms_only
+  [finetune] SCT factor params: 71,603,231 | Dense group params: 35,136
+  [finetune] step    1/300 | loss 12.1378 | ppl 186803.0 | 1.3s
+  [finetune] step   50/300 | loss 7.1461 | ppl 1269.2 | 71.2s
+  [finetune] step  100/300 | loss 4.5859 | ppl 98.1 | 143.5s
+  [finetune] step  150/300 | loss 3.8057 | ppl 45.0 | 216.4s
+  [finetune] step  200/300 | loss 3.2609 | ppl 26.1 | 290.0s
+  [finetune] step  250/300 | loss 2.8554 | ppl 17.4 | 363.6s
+  [finetune] step  300/300 | loss 1.5640 | ppl 4.8 | 437.8s
+  [finetune] Done: 300 steps in 437.8s | final_loss=1.5581 | final_ppl=4.75
+  Measuring post-finetune ppl...
+  Post-finetune ppl: 78.93
+
+──────────────────────────────────────────────────────────────────────
+  Config 4/8: E=0.9 | sct_lr=5e-04 | ratio=25 | norms+attn
+──────────────────────────────────────────────────────────────────────
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 7451.13it/s]
+  Measuring pre-finetune ppl...
+  Pre-finetune ppl: 1.81
+  Applying SCT (energy=0.9)...
+  90 layers replaced, compression=1.11x
+  Measuring post-SCT (pre-finetune) ppl...
+  Post-SCT ppl: 119677.21
+  [finetune] Loading data (max_samples=500, seq_len=128)...
+  [finetune] 500 samples loaded
+  [finetune] sct_lr=5.00e-04, dense_lr=2.00e-05 (ratio=25x), unfreeze=norms+attn
+  [finetune] SCT factor params: 71,603,231 | Dense group params: 26,577,216
+  [finetune] step    1/300 | loss 12.1378 | ppl 186803.0 | 1.6s
+  [finetune] step   50/300 | loss 7.2315 | ppl 1382.3 | 82.4s
+  [finetune] step  100/300 | loss 4.9912 | ppl 147.1 | 165.7s
+  [finetune] step  150/300 | loss 4.0562 | ppl 57.8 | 249.3s
+  [finetune] step  200/300 | loss 3.3953 | ppl 29.8 | 332.6s
+  [finetune] step  250/300 | loss 3.0332 | ppl 20.8 | 417.0s
+  [finetune] step  300/300 | loss 1.6874 | ppl 5.4 | 502.4s
+  [finetune] Done: 300 steps in 502.4s | final_loss=1.7036 | final_ppl=5.49
+  Measuring post-finetune ppl...
+  Post-finetune ppl: 79.52
+
+──────────────────────────────────────────────────────────────────────
+  Config 5/8: E=0.95 | sct_lr=1e-03 | ratio=25 | norms_only
+──────────────────────────────────────────────────────────────────────
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 7338.12it/s]
+  Measuring pre-finetune ppl...
+  Pre-finetune ppl: 1.81
+  Applying SCT (energy=0.95)...
+  90 layers replaced, compression=0.94x
+  Measuring post-SCT (pre-finetune) ppl...
+  Post-SCT ppl: 3512.37
+  [finetune] Loading data (max_samples=500, seq_len=128)...
+  [finetune] 500 samples loaded
+  [finetune] sct_lr=1.00e-03, dense_lr=4.00e-05 (ratio=25x), unfreeze=norms_only
+  [finetune] SCT factor params: 84,298,135 | Dense group params: 35,136
+  [finetune] step    1/300 | loss 9.4200 | ppl 12332.0 | 1.7s
+  [finetune] step   50/300 | loss 5.5655 | ppl 261.2 | 89.7s
+  [finetune] step  100/300 | loss 5.0791 | ppl 160.6 | 178.9s
+  [finetune] step  150/300 | loss 4.4803 | ppl 88.3 | 269.6s
+  [finetune] step  200/300 | loss 3.8758 | ppl 48.2 | 361.9s
+  [finetune] step  250/300 | loss 3.4374 | ppl 31.1 | 455.2s
+  [finetune] step  300/300 | loss 2.0039 | ppl 7.4 | 550.2s
+  [finetune] Done: 300 steps in 550.2s | final_loss=1.9587 | final_ppl=7.09
+  Measuring post-finetune ppl...
+  Post-finetune ppl: 170.20
+
+──────────────────────────────────────────────────────────────────────
+  Config 6/8: E=0.95 | sct_lr=1e-03 | ratio=25 | norms+attn
+──────────────────────────────────────────────────────────────────────
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 7843.92it/s]
+  Measuring pre-finetune ppl...
+  Pre-finetune ppl: 1.81
+  Applying SCT (energy=0.95)...
+  90 layers replaced, compression=0.94x
+  Measuring post-SCT (pre-finetune) ppl...
+  Post-SCT ppl: 3512.37
+  [finetune] Loading data (max_samples=500, seq_len=128)...
+  [finetune] 500 samples loaded
+  [finetune] sct_lr=1.00e-03, dense_lr=4.00e-05 (ratio=25x), unfreeze=norms+attn
+  [finetune] SCT factor params: 84,298,135 | Dense group params: 26,577,216
+  [finetune] step    1/300 | loss 9.4200 | ppl 12332.0 | 1.9s
+  [finetune] step   50/300 | loss 5.1179 | ppl 167.0 | 99.4s
+  [finetune] step  100/300 | loss 4.8618 | ppl 129.3 | 199.2s
+  [finetune] step  150/300 | loss 4.3002 | ppl 73.7 | 300.7s
+  [finetune] step  200/300 | loss 3.6867 | ppl 39.9 | 404.2s
+  [finetune] step  250/300 | loss 3.2655 | ppl 26.2 | 507.4s
+  [finetune] step  300/300 | loss 1.7932 | ppl 6.0 | 613.5s
+  [finetune] Done: 300 steps in 613.5s | final_loss=1.7420 | final_ppl=5.71
+  Measuring post-finetune ppl...
+  Post-finetune ppl: 166.08
+
+──────────────────────────────────────────────────────────────────────
+  Config 7/8: E=0.95 | sct_lr=5e-04 | ratio=25 | norms_only
+──────────────────────────────────────────────────────────────────────
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 7776.44it/s]

@@ -1,0 +1,122 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+========================================================================
+  SCT x TurboQuant Pareto Frontier Experiment
+========================================================================
+  Model:       HuggingFaceTB/SmolLM2-135M
+  Max tokens:  768
+  Energies:    [None, 0.99, 0.95, 0.9, 0.8]
+  TQ configs:  [(None, None), (4, 4), (3, 4), (3, 2), (2, 2)]
+  Device:      cpu
+
+  Loading tokenizer...
+  Loading eval text (768 tokens)...
+  [warn] wikitext load failed (Invalid HF URI 'hf://datasets/wikitext@b08601e04326c79dfdd32d625aee71d232d685c3/.huggingface.yaml'. Repository id must be 'namespace/name', got 'wikitext'.), using fallback text
+  Got 768 eval tokens
+  Model: 30 layers, 3 KV heads, head_dim=64
+
+
+────────────────────────────────────────────────────────────────────────
+  SCT energy: dense
+────────────────────────────────────────────────────────────────────────
+  Loading model...
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 8260.75it/s]
+  Running: dense + fp16-KV ... ppl=3.7, weight=525449KB, kv=17280KB, tok/s=1537.8, TQ=NO
+  Running: dense + TQ(k=4,v=4) ... ppl=6.5, weight=525449KB, kv=5670KB, tok/s=984.0, TQ=OK
+  Running: dense + TQ(k=3,v=4) ... ppl=41.4, weight=525449KB, kv=4590KB, tok/s=917.6, TQ=OK
+  Running: dense + TQ(k=3,v=2) ... ppl=64.7, weight=525449KB, kv=3510KB, tok/s=988.7, TQ=OK
+  Running: dense + TQ(k=2,v=2) ... ppl=1239.9, weight=525449KB, kv=2970KB, tok/s=919.0, TQ=OK
+
+────────────────────────────────────────────────────────────────────────
+  SCT energy: E=0.99
+────────────────────────────────────────────────────────────────────────
+  Loading model...
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 8194.29it/s]
+  Applying SCT (energy=0.99)...
+  Replaced 90 MLP layers, MLP params: 79,626,240 -> 100,781,648 (0.79x)
+  Running: E=0.99 + fp16-KV ... ppl=26.9, weight=608088KB, kv=17280KB, tok/s=1364.0, TQ=NO
+  Running: E=0.99 + TQ(k=4,v=4) ... ppl=204.7, weight=608088KB, kv=5670KB, tok/s=875.2, TQ=OK
+  Running: E=0.99 + TQ(k=3,v=4) ... ppl=1551.2, weight=608088KB, kv=4590KB, tok/s=896.1, TQ=OK
+  Running: E=0.99 + TQ(k=3,v=2) ... ppl=5444.4, weight=608088KB, kv=3510KB, tok/s=886.5, TQ=OK
+  Running: E=0.99 + TQ(k=2,v=2) ... ppl=27646.1, weight=608088KB, kv=2970KB, tok/s=901.6, TQ=OK
+
+────────────────────────────────────────────────────────────────────────
+  SCT energy: E=0.95
+────────────────────────────────────────────────────────────────────────
+  Loading model...
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 7841.49it/s]
+  Applying SCT (energy=0.95)...
+  Replaced 90 MLP layers, MLP params: 79,626,240 -> 84,298,135 (0.94x)
+  Running: E=0.95 + fp16-KV ... ppl=9729.2, weight=543699KB, kv=17280KB, tok/s=1464.4, TQ=NO
+  Running: E=0.95 + TQ(k=4,v=4) ... ppl=22336.8, weight=543699KB, kv=5670KB, tok/s=941.6, TQ=OK
+  Running: E=0.95 + TQ(k=3,v=4) ... ppl=83047.9, weight=543699KB, kv=4590KB, tok/s=940.6, TQ=OK
+  Running: E=0.95 + TQ(k=3,v=2) ... ppl=904046.3, weight=543699KB, kv=3510KB, tok/s=943.9, TQ=OK
+  Running: E=0.95 + TQ(k=2,v=2) ... ppl=442850.3, weight=543699KB, kv=2970KB, tok/s=928.2, TQ=OK
+
+────────────────────────────────────────────────────────────────────────
+  SCT energy: E=0.9
+────────────────────────────────────────────────────────────────────────
+  Loading model...
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 7757.78it/s]
+  Applying SCT (energy=0.9)...
+  Replaced 90 MLP layers, MLP params: 79,626,240 -> 71,603,231 (1.11x)
+  Running: E=0.9 + fp16-KV ... ppl=145229.9, weight=494109KB, kv=17280KB, tok/s=1533.3, TQ=NO
+  Running: E=0.9 + TQ(k=4,v=4) ... ppl=330395.9, weight=494109KB, kv=5670KB, tok/s=963.3, TQ=OK
+  Running: E=0.9 + TQ(k=3,v=4) ... ppl=204366.8, weight=494109KB, kv=4590KB, tok/s=1000.5, TQ=OK
+  Running: E=0.9 + TQ(k=3,v=2) ... ppl=90199.7, weight=494109KB, kv=3510KB, tok/s=923.1, TQ=OK
+  Running: E=0.9 + TQ(k=2,v=2) ... ppl=137460.1, weight=494109KB, kv=2970KB, tok/s=962.7, TQ=OK
+
+────────────────────────────────────────────────────────────────────────
+  SCT energy: E=0.8
+────────────────────────────────────────────────────────────────────────
+  Loading model...
+Loading weights:   0%|          | 0/272 [00:00<?, ?it/s]Loading weights: 100%|██████████| 272/272 [00:00<00:00, 8228.22it/s]
+  Applying SCT (energy=0.8)...
+  Replaced 90 MLP layers, MLP params: 79,626,240 -> 54,487,931 (1.46x)
+  Running: E=0.8 + fp16-KV ... ppl=13692120.6, weight=427253KB, kv=17280KB, tok/s=1726.2, TQ=NO
+  Running: E=0.8 + TQ(k=4,v=4) ... ppl=7723523.8, weight=427253KB, kv=5670KB, tok/s=1055.5, TQ=OK
+  Running: E=0.8 + TQ(k=3,v=4) ... ppl=947191.2, weight=427253KB, kv=4590KB, tok/s=1060.7, TQ=OK
+  Running: E=0.8 + TQ(k=3,v=2) ... ppl=336560.1, weight=427253KB, kv=3510KB, tok/s=1052.8, TQ=OK
+  Running: E=0.8 + TQ(k=2,v=2) ... ppl=138724.5, weight=427253KB, kv=2970KB, tok/s=1055.7, TQ=OK
+
+  Saved results -> /scratch/DA24B039/sct_tq/experiments/sct_tq_pareto_results.json
+
+========================================================================
+  RESULTS TABLE
+========================================================================
+  Config                             PPL    WtMB    KVKB    TotMB   RSS MB   tok/s  Pareto
+  ────────────────────────────── ─────── ─────── ─────── ──────── ──────── ─────── ───────
+  dense + fp16-KV                   3.70   538.1 17694.7   555.75   1118.6  1537.8       *
+  dense + TQ(k=4,v=4)               6.46   538.1  5806.1   543.87   1238.7   984.0       *
+  dense + TQ(k=3,v=4)              41.37   538.1  4700.2   542.76   1238.7   917.6       *
+  dense + TQ(k=3,v=2)              64.75   538.1  3594.2   541.65   1212.2   988.7       *
+  dense + TQ(k=2,v=2)            1239.89   538.1  3041.3   541.10   1220.0   919.0       *
+  E=0.99 + fp16-KV                 26.93   622.7 17694.7   640.38   1672.2  1364.0        
+  E=0.99 + TQ(k=4,v=4)            204.75   622.7  5806.1   628.49   1705.7   875.2        
+  E=0.99 + TQ(k=3,v=4)           1551.17   622.7  4700.2   627.38   1737.9   896.1        
+  E=0.99 + TQ(k=3,v=2)           5444.39   622.7  3594.2   626.28   1737.9   886.5        
+  E=0.99 + TQ(k=2,v=2)           27646.14   622.7  3041.3   625.72   1688.8   901.6        
+  E=0.95 + fp16-KV               9729.19   556.7 17694.7   574.44   1692.9  1464.4        
+  E=0.95 + TQ(k=4,v=4)           22336.81   556.7  5806.1   562.55   1692.9   941.6        
+  E=0.95 + TQ(k=3,v=4)           83047.85   556.7  4700.2   561.45   1692.9   940.6        
+  E=0.95 + TQ(k=3,v=2)           904046.29   556.7  3594.2   560.34   1692.9   943.9        
+  E=0.95 + TQ(k=2,v=2)           442850.29   556.7  3041.3   559.79   1692.9   928.2        
+  E=0.9 + fp16-KV                145229.88   506.0 17694.7   523.66   1598.8  1533.3       *
+  E=0.9 + TQ(k=4,v=4)            330395.90   506.0  5806.1   511.77   1598.8   963.3        
+  E=0.9 + TQ(k=3,v=4)            204366.78   506.0  4700.2   510.67   1598.8  1000.5       *
+  E=0.9 + TQ(k=3,v=2)            90199.71   506.0  3594.2   509.56   1598.8   923.1       *
+  E=0.9 + TQ(k=2,v=2)            137460.11   506.0  3041.3   509.01   1598.8   962.7       *
+  E=0.8 + fp16-KV                13692120.58   437.5 17694.7   455.20   1707.5  1726.2       *
+  E=0.8 + TQ(k=4,v=4)            7723523.77   437.5  5806.1   443.31   1707.5  1055.5        
+  E=0.8 + TQ(k=3,v=4)            947191.17   437.5  4700.2   442.21   1707.5  1060.7       *
+  E=0.8 + TQ(k=3,v=2)            336560.09   437.5  3594.2   441.10   1707.5  1052.8        
+  E=0.8 + TQ(k=2,v=2)            138724.50   437.5  3041.3   440.55   1707.5  1055.7       *
+
+  Pareto frontier: 12 points (marked *)
+  Note: SmolLM2-135M has hidden_dim=576 < 2048 — SCT weight compression
+        is minimal at this scale (documented in CLAUDE.md).
+        TurboQuant KV bytes ARE reduced but decode latency may increase
+        due to dequant overhead on CPU (no Triton kernels).
+
+  Saved plot -> /scratch/DA24B039/sct_tq/experiments/sct_tq_pareto.png
+
+Done.
