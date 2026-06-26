@@ -1,0 +1,6 @@
+[submodule "SCT"]
+	path = SCT
+	url = https://github.com/EctoSpace/SCT.git
+[submodule "turboquant"]
+	path = turboquant
+	url = https://github.com/0xSero/turboquant.git

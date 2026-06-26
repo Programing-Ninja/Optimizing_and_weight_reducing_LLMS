@@ -9,10 +9,15 @@ copy). If anything breaks, that file is the thing to paste back for debugging.
 ---
 
 ## 0. Get the code onto the cluster
+`SCT/` and `turboquant/` are **git submodules** — clone with `--recurse-submodules`
+or they'll be empty and the `pip install -e` step will fail.
 ```bash
-# If not already cloned:
-git clone https://github.com/Programing-Ninja/Optimizing_and_weight_reducing_LLMS.git
+git clone --recurse-submodules \
+    https://github.com/Programing-Ninja/Optimizing_and_weight_reducing_LLMS.git
 cd Optimizing_and_weight_reducing_LLMS
+
+# If you cloned WITHOUT --recurse-submodules, pull them now:
+git submodule update --init --recursive
 ```
 
 ## 1. Grab a GPU + load toolchain modules
