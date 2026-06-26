@@ -121,3 +121,113 @@ STEPS: 1[done] plan+prompts. 2 implement per-component finetune + HP harness.
    findings summary table.
 4. Document the run/observations in iteration.txt.
 5. Commit + push to origin (root repo).
+
+
+================================================================================
+=== PLAN v3: Llama-3.1-8B Utility-vs-Compression Pareto pipeline (A100)       ===
+=== Date: 2026-06-26   Opus(plan)                                            ===
+================================================================================
+
+DECISIONS (confirmed with user 2026-06-26):
+  - Hardware:  single NVIDIA A100 40GB  (bf16 8B ~16GB fits + LoRA + eval).
+  - Model:     meta-llama/Llama-3.1-8B  (BASE, gated -> needs HF_TOKEN). hidden=4096
+               => SCT actually compresses here (the whole point vs SmolLM2-135M).
+  - Eval:      SUBSET per benchmark for the sweep (fast). Optionally re-run full
+               on frontier points later.
+  - Recovery:  recovery-LoRA TOGGLE -> measure utility BOTH without and with LoRA
+               so the plot shows the recovery gain. LoRA-scope is a flag
+               (per-energy default; per-grid-point optional).
+  - Source:    SCT, TurboQuant, and recovery-LoRA code will be IMPORTED by the user
+               into the repo. Pipeline binds to their real APIs (NOT the inlined
+               copies in experiments/sct_tq_pareto.py).
+
+GOAL
+----
+Trace the Pareto frontier of UTILITY (y) vs COMPRESSION (x) for Llama-3.1-8B as we
+sweep two compression knobs jointly:
+  (A) SCT energy E  -> adaptive rank of SpectralLinear MLP factors (weight-side).
+  (B) TurboQuant KV bits (key_bits, value_bits) -> KV-cache-side quantization.
+And answer the two-way question:
+  - How does weight-compression energy change the tolerable extent of quantization?
+  - How does quantization change the achievable limit of weight compression?
+  (i.e. interaction between A and B, visualized as frontier shift + a heatmap.)
+
+UTILITY METRIC  (pipeline/utility.py)
+-------------------------------------
+Four components, each computed on a fixed SUBSET, on the SAME modified model so the
+TQ-quantized K/V code path is exercised (see EVAL note):
+  - Perplexity   : wikitext-2-raw-v1 (lower better)            -> ppl
+  - HellaSwag    : length-normalized loglik acc (~1000 items)  -> acc_norm
+  - MMLU         : 4-way loglik acc (~500 items, stratified)   -> acc
+  - TruthfulQA   : MC2 (full ~817, it's small)                 -> mc2
+Aggregate utility U in [0,1], normalized against the DENSE fp16 baseline so dense~1:
+    s_ppl  = baseline_ppl / ppl                 (relative, capped at 1.0)
+    s_hs   = acc_norm / baseline_acc_norm
+    s_mmlu = acc       / baseline_mmlu
+    s_tqa  = mc2       / baseline_mc2
+    U = w_ppl*s_ppl + w_hs*s_hs + w_mmlu*s_mmlu + w_tqa*s_tqa   (default equal w)
+  Weights configurable. Store raw + normalized + U in JSON for transparency.
+
+EVAL CODE PATH (critical, rule 6 note)
+--------------------------------------
+HellaSwag/MMLU/TruthfulQA/PPL are LOGLIKELIHOOD tasks = single forward, no decode.
+Default HF/lm-eval forwards run use_cache=False, so a KV-cache quantizer would NEVER
+be exercised and quantization would look free. To make TQ's quality impact REAL we
+force every eval forward with use_cache=True + a TurboQuantCache, so attention sees
+compressed->dequantized K/V even in prefill. => custom lightweight evaluator
+(pipeline/eval_tasks.py) rather than stock lm-eval, for full control of the cache
+path. Scoring follows standard recipes (length-normalized gold-continuation loglik).
+
+COMPRESSION METRIC  (pipeline/compression.py)
+---------------------------------------------
+  weight_bytes = SCT factor params (U,s,V) on compressed MLPs + remaining dense
+                 params + (merged recovery-LoRA params if applied) at storage dtype.
+  kv_bytes     = peak TurboQuant compressed KV bytes for the eval workload
+                 (vs fp16 baseline 2*L*Hkv*hd*T*2).
+  total_bytes  = weight_bytes + kv_bytes.
+  compression_ratio = dense_fp16_total_bytes / total_bytes  (x-axis).
+
+SWEEP GRID  (run_pareto.py)
+---------------------------
+  energies = [dense, 0.99, 0.97, 0.95, 0.90, 0.85]
+  tq_kv    = [fp16, (4,4), (3,4), (3,2), (2,2)]
+  lora     = [off, on]            # toggle
+  => for each (energy, tq, lora) record {raw metrics, U, bytes, ratio, ram, tok/s}.
+  Frontier computed over (U, compression_ratio); also a 2-D heatmap U(energy, kv).
+  --quick mode: 2 energies x 2 kv x lora{off,on} for smoke test.
+
+RECOVERY-LoRA  (pipeline/recovery.py wraps imported recovery-LoRA)
+-----------------------------------------------------------------
+  After SCT compression (per energy), train a recovery-LoRA on a small instruct/text
+  mix to recover utility; default scope = per-energy (reused across kv configs),
+  --lora-scope per-point optional. Toggle records U_before vs U_after.
+
+MODULES (new pipeline/ package; reuse imported SCT/TQ/LoRA, do NOT re-inline)
+  pipeline/model_build.py  - load Llama bf16, apply SCT (imported), apply LoRA,
+                             build TurboQuantCache (imported).
+  pipeline/eval_tasks.py   - ppl + HellaSwag + MMLU + TruthfulQA loglik w/ TQ cache.
+  pipeline/utility.py      - normalization + aggregate U.
+  pipeline/compression.py  - byte accounting + ratio.
+  pipeline/recovery.py     - recovery-LoRA train/load wrapper.
+  pipeline/pareto.py       - frontier + scatter plot + energy-vs-kv heatmap.
+  run_pareto.py            - orchestrator (grid, JSON, PNGs).
+  run.sh / README          - A100 run instructions (HF login, deps, invocation).
+
+A100 40GB MEMORY PLAN
+  - Load base in bf16 (~16GB). SCT factorization done layer-by-layer on GPU/CPU to
+    avoid a 2nd dense copy. LoRA adapters tiny. Eval batch sized to fit (guarded).
+  - One model in memory at a time; free + empty_cache between energies.
+  - device_map kept simple/single-GPU but configurable.
+
+OPEN ITEMS BEFORE IMPLEMENTATION
+  - Need the imported APIs: SCT factorize entry point + retract; TurboQuant cache
+    class name/ctor; recovery-LoRA train/apply signature. Will match exactly.
+  - HF_TOKEN in .env + gated-model access approved for meta-llama/Llama-3.1-8B.
+
+STEPS
+  1.[done] plan + questions + .env scaffold + prompts.txt.
+  2. user imports SCT / TurboQuant / recovery-LoRA source.
+  3. build pipeline/ modules against real APIs.
+  4. --quick smoke (1-2 points) to shake out shapes/imports/OOM.
+  5. full grid run (background) -> JSON + Pareto PNG + heatmap.
+  6. iteration.txt + README + commit/push (rules 1,4,5).

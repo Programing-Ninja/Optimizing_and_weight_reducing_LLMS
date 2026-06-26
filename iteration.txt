@@ -224,3 +224,67 @@ What the data says:
 
 README.md updated with embedded png + results table + observations (under the
 SCT HP-Tuning Harness section, the appropriate results location).
+
+==========================================================================
+LLAMA-3.1-8B UTILITY-VS-COMPRESSION PIPELINE (2026-06-26)
+==========================================================================
+Scaled the SCT x TurboQuant study from SmolLM2-135M/CPU/perplexity to base
+Llama-3.1-8B on a single A100 40GB, with a real utility metric + recovery-LoRA.
+
+New package `pipeline/` + orchestrator `run_pareto.py` + `run.sh`:
+  sct_apply.py  - apply SCT to Llama MLP (gate/up/down). Computes energy->rank
+                  cutoff and does the SVD ON-GPU (the packaged from_linear() does
+                  SVD on CPU -> far too slow for 8B). Matches the package's exact
+                  U=Vh[:k].T, V=U[:,:k], s=S[:k] factor convention.
+  tq_cache.py   - TurboQuantLayer(DynamicLayer) + TurboQuantCache: compress K
+                  (TurboQuantProd) + V (group quant), return dequantized history on
+                  update() so loglikelihood forwards actually feel the quantization.
+  eval_tasks.py - wikitext-2 ppl + HellaSwag(acc_norm) + MMLU(zero-shot 4-way) +
+                  TruthfulQA(MC2), all via a cache_factory (None=dense fp16). Subset-
+                  able for the fast sweep.
+  utility.py    - normalize each metric vs dense baseline -> aggregate U in [0,1].
+  compression.py- weight bytes (SpectralLinear factors auto-counted) + KV bytes.
+  recovery.py   - recovery-LoRA via peft on q/k/v/o_proj, merge_and_unload (0 extra
+                  storage). Toggle off/on shows the recovery gain.
+  pareto.py     - frontier over (U, compression_ratio) + energy x KV-bits heatmap.
+
+Decisions (confirmed w/ user): A100 40GB, BASE Llama-3.1-8B, SUBSET eval, LoRA
+TOGGLE (before/after). .env scaffold created for HF_TOKEN (gated model).
+
+What worked:
+  - All files pass py_compile. Bound to the REAL SCT/turboquant APIs (verified
+    against source), not the inlined copies from the 135M experiment.
+  - KV byte accounting uses a real TurboQuantLayer on a reference-length tensor
+    (kv-ref-tokens) so baseline fp16 and quantized bytes are directly comparable.
+
+What is NOT yet verified (cannot run here):
+  - This dev box has NO torch and only a 6GB laptop GPU -> the pipeline was NOT
+    executed. Must be smoke-tested on the A100 with `./run.sh quick` FIRST to shake
+    out transformers 5.x custom-cache integration, dataset configs (hellaswag/mmlu/
+    truthful_qa field names), and OOM. Then `./run.sh full`.
+
+Counterintuitive notes (rule 6):
+  - Recovery-LoRA targets ATTENTION projections, not the SCT-compressed MLP:
+    SpectralLinear isn't nn.Linear so peft can't wrap it; adapting q/k/v/o recovers
+    utility lost to MLP compression and folds into existing weights for free.
+  - LoRA has no "per-KV-point" scope: training never touches the KV cache (an
+    inference object), so one LoRA per energy is reused across all KV configs.
+  - Full MMLU/HellaSwag/TruthfulQA x the whole grid is many hours on one A100;
+    defaults use subsets (hs=400, mmlu=400, tqa=200). Re-run full on frontier
+    points later if publication numbers are needed.
+
+Runtime estimate (subset defaults, 8B A100, bs=1 forwards): each config ~ several
+minutes of eval; full grid (~6 energies x 5 KV x {off,on} minus dense-LoRA) plus
+LoRA training per energy -> plan for a few hours. Tune subset sizes / --lora-steps.
+
+--- ADDENDUM (2026-06-26): --dry-run + HPC setup + logging ---
+  - run_pareto.py --dry-run: 6-step integration smoke (load Llama, apply SCT, forward
+    through TurboQuantCache, dense forward, KV byte accounting, peft availability) with
+    NO dataset downloads and NO training. Run FIRST on any new node to separate
+    model/cache/OOM failures from dataset/network failures. Returns nonzero on failure.
+  - run.sh: added `dry` mode; every run tees stdout+stderr to a timestamped logs/*.log
+    AND logs/latest.log (PIPESTATUS-preserved exit). logs/ is gitignored.
+  - HPC_SETUP.md: fresh-environment command list for the A100 (modules, venv, CUDA
+    torch wheel, pip -e SCT/turboquant, HF_HOME on SCRATCH, .env token, dry->quick->full
+    order, optional SLURM sbatch). 
+  - Order to run on HPC: ./run.sh dry  ->  ./run.sh quick  ->  ./run.sh full.

@@ -50,3 +50,31 @@ Tasks A-E: (A) finetune_sct() in sct_finetune.py, (B) sct_hp_tune.py grid harnes
 (E) smoke validate on 135M. Confirmed 44x ppl improvement (6318->144) in 120 steps.
 
 [2026-06-15] upload a new screenshot for the hp_tune result to github and make a summary of the observations in the appropriate place
+
+=== [2026-06-26] PROMPT: Scale up to Llama-3.1-8B + utility metric + recovery-LoRA pipeline ===
+"Read the project and then make the following changes: First use LLama3.1 8B model
+otherwise SCT's advantage is hidden. Next make a utility metric integrating
+Perplexity, HellaSwag, MMLU and TruthfulQA, next implement utility recovery via
+recovery-LoRA. Make it into a pipeline that I can run on an Nvidia A100, to analyse
+the impact of different energy-weight compression on extent of quantization and the
+converse, impact of quantization on the limit of compression via making a pareto
+frontier graph of utility vs compression etc. First make a plan, ask whatever is
+required, including making a secrets file, then start making the script + run
+instructions."
+-> Planning turn. Confirmed via questions: A100 40GB, BASE Llama-3.1-8B, SUBSET eval,
+   recovery-LoRA TOGGLE (before/after). Plan written to path.txt (v3). Created .env
+   secrets scaffold (HF_TOKEN for gated model). User to import SCT/TurboQuant/
+   recovery-LoRA source; pipeline will bind to their real APIs before implementation.
+-> User imported SCT/ + turboquant/ (recovery-LoRA = peft, implemented here). Built
+   pipeline/ package (sct_apply, tq_cache, eval_tasks, utility, compression, recovery,
+   pareto) + run_pareto.py orchestrator + run.sh + requirements.txt + README/iteration.
+
+[2026-06-26] PROMPT
+"add the --dry-run smoke test and then commit and push. also make a list of commands
+to run when i import this on the hpc that i should run. remember to have a clean log
+file which i can use to debug issues if any arises on the hpc. remember we will have
+to make a new environment on the hpc since its the first time we are gonna be using it"
+-> Added run_pareto.py --dry-run (model+SCT+TQ-cache forward+KV accounting+peft check,
+   no datasets/training). run.sh now tees every run to logs/latest.log (+timestamped);
+   added `dry` mode. Wrote HPC_SETUP.md (fresh venv on A100, ordered command list,
+   SCRATCH HF cache, SLURM sbatch example). logs/ gitignored. Committed + pushed.

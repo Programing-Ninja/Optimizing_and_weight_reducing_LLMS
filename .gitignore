@@ -222,3 +222,6 @@ __marimo__/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Pipeline run logs (debug noise — keep the dir, ignore contents)
+logs/

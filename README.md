@@ -9,7 +9,60 @@ Here I try to find ways to get better weight and KV cache optimization, starting
 
 ## Experiments
 
-### SCT x TurboQuant Joint Pareto Frontier
+### Llama-3.1-8B Utility-vs-Compression Pareto Pipeline (A100)
+
+**Files:** `run_pareto.py` + the `pipeline/` package · **Launcher:** `run.sh`
+
+The scaled-up pipeline. Where the SmolLM2-135M experiment used perplexity only and
+hid SCT's weight savings (hidden=576 < 2048), this runs **base Llama-3.1-8B**
+(hidden=4096, where SCT actually compresses) and replaces "accuracy" with a real
+**utility metric**.
+
+**Utility metric** (`pipeline/utility.py`) — four benchmarks, each normalized to the
+dense fp16 baseline (baseline ≈ 1.0), weighted (equal by default):
+
+| Component | Benchmark | Direction |
+|-----------|-----------|-----------|
+| `s_ppl`   | wikitext-2 perplexity | lower better → `baseline_ppl/ppl` |
+| `s_hs`    | HellaSwag acc_norm    | higher better |
+| `s_mmlu`  | MMLU 4-way acc        | higher better |
+| `s_tqa`   | TruthfulQA MC2        | higher better |
+
+`U = Σ wᵢ·sᵢ ∈ [0,1]`. All four are run on the **same** compressed+quantized model,
+forced through the TurboQuant cache (`use_cache=True`, eager attention) so KV
+quantization genuinely affects the loglikelihood scores — a plain forward would run
+`use_cache=False` and make quantization look free.
+
+**Sweep axes:** SCT energy `{dense, 0.99, 0.97, 0.95, 0.90, 0.85}` × KV bits
+`{fp16, 4×4, 3×4, 3×2, 2×2}` × recovery-LoRA `{off, on}` (toggle).
+
+**Recovery-LoRA** (`pipeline/recovery.py`) — `peft` LoRA on the attention projections
+(`q/k/v/o_proj`, which stay `nn.Linear` after SCT compresses only the MLP), trained on
+an alpaca slice then `merge_and_unload`-ed → **zero extra storage**. The off/on toggle
+exposes the recovery gain.
+
+**Outputs** (`results_llama8b/`): `pareto_results.json`,
+`pareto_utility_vs_compression.png` (frontier), and
+`heatmap_energy_kv_{nolora,lora}.png` — the heatmap answers the two-way question (how
+weight-compression energy shifts the tolerable quantization level, and vice-versa).
+
+**Run:**
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e SCT && pip install -e turboquant
+cp .env.example .env          # paste HF_TOKEN (request gated Llama-3.1-8B access first)
+
+./run.sh quick                # smoke test FIRST (tiny subsets, 1-2 points)
+./run.sh full                 # full energy x KV x LoRA grid on the A100
+```
+
+Subset sizes, LoRA steps, and utility weights are all CLI flags
+(`python run_pareto.py --help`).
+
+---
+
+### SCT x TurboQuant Joint Pareto Frontier (SmolLM2-135M, CPU — earlier work)
 
 **File:** `experiments/sct_tq_pareto.py`
 

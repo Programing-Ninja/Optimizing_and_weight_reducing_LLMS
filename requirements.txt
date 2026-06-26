@@ -1,0 +1,18 @@
+# Pipeline deps for the Llama-3.1-8B utility-vs-compression Pareto sweep (A100).
+# Install torch matching your CUDA first (see https://pytorch.org), e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+torch>=2.4
+transformers>=4.45
+datasets>=2.20
+accelerate>=0.34
+peft>=0.12
+sentencepiece
+matplotlib
+numpy
+scipy
+psutil
+python-dotenv
+huggingface_hub
+# editable installs of the two vendored packages (run separately):
+#   pip install -e SCT
+#   pip install -e turboquant
