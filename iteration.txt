@@ -288,3 +288,35 @@ LoRA training per energy -> plan for a few hours. Tune subset sizes / --lora-ste
     torch wheel, pip -e SCT/turboquant, HF_HOME on SCRATCH, .env token, dry->quick->full
     order, optional SLURM sbatch). 
   - Order to run on HPC: ./run.sh dry  ->  ./run.sh quick  ->  ./run.sh full.
+
+--- THEORY TRACK kickoff (2026-06-27) ---
+Context: HPC unavailable, so opened a laptop-only theory track parallel to the
+empirical run_pareto.py (Llama-3.1-8B) pipeline.
+
+Done this turn: wrote theory/THEORETICAL_ANALYSIS.md (planning + reference doc only,
+no code executed).
+
+Key modeling decisions (rule 6 - flag the counterintuitive):
+  - The whole insight hinges on an ASYMMETRY: SCT error is a structured BIAS that
+    falls ~LINEARLY in retained energy (Eckart-Young: ||W-W_r||^2=(1-eta)||W||^2),
+    while TurboQuant is UNBIASED so its error is pure VARIANCE that falls
+    ~EXPONENTIALLY in bits (2^(-2b)). Linear-vs-exponential is exactly what makes
+    the JOINT optimum nontrivial: at tight budgets spend bits on TQ first, at loose
+    budgets push TQ to 4-bit early and invest the rest in SCT energy; the crossover
+    budget is the optimum we want.
+  - Additivity dL ~ alpha(1-eta)+beta*2^(-2b) is an ASSUMPTION, not a fact. SCT acts
+    on static weights, TQ on the dynamic cache, so the cross term should be 2nd-order
+    -- but if compressing weights shifts the cache statistics it could couple. The
+    toy combined-grid arm is specifically there to confirm or REFUTE this; a large
+    cross term would itself be the headline result.
+  - recovery-LoRA enters the model as an alpha-SHRINK (it folds into attention
+    projections and recovers SCT's MLP bias -- consistent with the earlier note that
+    peft can't wrap SpectralLinear). Open Q: does that push the optimal eta upward?
+
+Why a toy linear-attention + linear-MLP on Gaussian: it makes the loss an exact
+quadratic with a KNOWN curvature H, so the predicted "excess loss ~ 1/2 tr(dW^T H dW)"
+becomes checkable as an equality, not a hand-wave -- cheap, on a laptop, before
+spending A100-hours.
+
+NOT done: no theory/toy or theory/models code yet; alpha/beta unmeasured; additivity
+untested. Next: scaffold theory/toy/ + theory/models/ and run roadmap steps 1-4.

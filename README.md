@@ -7,6 +7,10 @@ Here I try to find ways to get better weight and KV cache optimization, starting
 - `SCT/` — Spectral Compact Training: replaces nn.Linear with U diag(s) V^T factors; gradients flow through spectral factors with Stiefel retraction.
 - `turboquant/` — TurboQuant KV cache compression: random rotation + Lloyd-Max quantization for keys + group quantization for values.
 
+## Theory track (laptop, no HPC)
+
+- `theory/THEORETICAL_ANALYSIS.md` — analytic error models for SCT (low-rank **bias** ∝ `(1−η)`, Eckart–Young) and TurboQuant (unbiased **variance** ∝ `2^(−2b)`), combined into a rate–distortion objective `ΔL ≈ α(1−η)+β·2^(−2b)` whose budget-constrained optimum is "equal marginal loss per byte". Includes a tiny linear-attention + linear-MLP Gaussian toy to validate the models, an analysis roadmap, and grouped references. Code (`theory/toy/`, `theory/models/`) is the next step.
+
 ## Experiments
 
 ### Llama-3.1-8B Utility-vs-Compression Pareto Pipeline (A100)

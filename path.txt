@@ -231,3 +231,33 @@ STEPS
   4. --quick smoke (1-2 points) to shake out shapes/imports/OOM.
   5. full grid run (background) -> JSON + Pareto PNG + heatmap.
   6. iteration.txt + README + commit/push (rules 1,4,5).
+
+========================================================================
+PLAN v4 (2026-06-27) — THEORY TRACK (laptop, no HPC)
+========================================================================
+GOAL: explain + predict the utility-vs-compression frontier analytically so the
+HPC Pareto sweep can be placed (and later checked) intelligently. Find the OPTIMAL
+JOINT extent of weight compression (SCT) and KV quantization (TurboQuant).
+
+DOC (this turn): theory/THEORETICAL_ANALYSIS.md
+  Part A  analytic models:
+    A.1 SCT = low-rank truncation -> deterministic BIAS, ||W-W_r||^2=(1-eta)||W||^2
+        (Eckart-Young); excess loss ~ 1/2 tr(dW^T H dW) ~ alpha*(1-eta).
+    A.2 TurboQuant = unbiased estimator -> VARIANCE only, D(b)~c*tau^2*2^(-2b),
+        score-error var ~ 2^(-2b); excess loss ~ beta*2^(-2b).
+    A.3 combined dL ~ alpha(1-eta)+beta*2^(-2b) (additive to 1st order; cross term
+        = an open claim). Budget M(eta,b); optimum = equal marginal loss per byte
+        (Lagrangian/KKT). recovery-LoRA modeled as alpha-shrinking post-step.
+  Part B  toy validation: 1-2 layer LINEAR-ATTENTION + linear MLP on Gaussian data,
+        regression MSE, known H -> turn the "~" into "=". 4 arms: SCT sweep (est a),
+        TQ bit sweep (est b, check unbiased), combined grid (test additivity), LoRA.
+  Part C  roadmap steps 1-7 (steps 1-6 laptop; step 7 = validate on A100 later).
+  Part D  references (grouped: low-rank, KV-quant, RD theory, joint low-rank+quant
+        [LQ-LoRA/QLoRA/LoftQ = closest prior art], pruning, arch/scaling).
+  Part E  open questions: bias/variance independence, rotated-source constant,
+        LoRA shifting optimal eta, separate b_K vs b_V.
+
+NEXT ACTIONS (future turns, not done yet):
+  - scaffold theory/toy/  : gaussian_data.py, linear_attn_model.py, sweep.py
+  - scaffold theory/models/: rate_distortion.py (alpha(1-eta)+beta*2^-2b solver+plot)
+  - run steps 1-4 locally; record alpha,beta + additivity verdict in iteration.txt.

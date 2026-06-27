@@ -78,3 +78,22 @@ to make a new environment on the hpc since its the first time we are gonna be us
    no datasets/training). run.sh now tees every run to logs/latest.log (+timestamped);
    added `dry` mode. Wrote HPC_SETUP.md (fresh venv on A100, ordered command list,
    SCRATCH HF cache, SLURM sbatch example). logs/ gitignored. Committed + pushed.
+
+[2026-06-27] PROMPT
+"In a previous conversation I asked you to go through this directory and our objective
+of compression in terms of RAM usage of LLMs using weight compression (SCT),
+quantization (TurboQuant) and structured pruning with minimal loss of utility
+(incl. post-training recovery-LoRA), with utility metrics MMLU/HellaSwag/TruthfulQA.
+Since I am at home without HPC access, you suggested theoretical analysis: model SCT
+and TurboQuant, train a 1-2 layer linear-attention + linear-MLP model on Gaussian
+data, analyse behaviour across SCT energies to validate the utility model, then the
+combined SCT+TurboQuant effect theoretically. Objective: analyse the combined relation
+of quantization and weight compression and find the optimal extent of both. Make a doc
+with the suggestion + references, then continue."
+-> Created theory/THEORETICAL_ANALYSIS.md: analytic error models (SCT = spectral
+   low-rank BIAS ~ (1-eta) via Eckart-Young; TurboQuant = unbiased quantization
+   VARIANCE ~ 2^(-2b)), combined rate-distortion objective dL ~ a(1-eta)+b*2^(-2b)
+   with Lagrangian "equal marginal loss per byte" optimum, the toy validation
+   experiment (Part B), step-by-step roadmap (Part C), grouped references (Part D),
+   and open questions (Part E). No code yet; next action = scaffold theory/toy/ +
+   theory/models/.
