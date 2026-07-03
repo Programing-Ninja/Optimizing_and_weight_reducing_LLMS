@@ -30,7 +30,8 @@ import matplotlib.pyplot as plt
 from gaussian_data import GaussianTokenData
 from linear_attn_model import ToyConfig, LinearAttnToy, LAYER_NAMES, train_student, mse_loss
 from sct_utils import sct_truncate
-from common import Tee, RESULTS_DIR, get_device, seed_all, fit_through_origin, save_json
+from common import (Tee, RESULTS_DIR, get_device, seed_all, fit_through_origin,
+                    fit_power, save_json)
 
 ETAS = [0.90, 0.95, 0.98, 0.99, 0.999]
 SMALL_PERTURB_MAX_DISC = 0.06
@@ -111,14 +112,26 @@ def run(steps: int = 6000, eval_batch: int = 8192, log=print, device=None):
     mask = x <= SMALL_PERTURB_MAX_DISC
     alpha, r2a = fit_through_origin(x[mask], yb[mask])
     alpha_lora, r2b = fit_through_origin(x[mask], ya[mask])
-    log(f"[LoRA] ==> α (no LoRA)   = {alpha:.6e}  R²={r2a:.4f}")
-    log(f"[LoRA] ==> α_LoRA        = {alpha_lora:.6e}  R²={r2b:.4f}")
-    log(f"[LoRA] ==> α shrink factor = {alpha/ (alpha_lora+1e-30):.2f}×  "
+    # ΔL is concave in (1−η) (curvature-weighting), so report the power-law form
+    # too — it's the honest 1-D summary; the straight α line is only local.
+    Ab, pb, r2pb = fit_power(x, yb)
+    Aa, pa, r2pa = fit_power(x, ya)
+    med_recovery = float(np.median([r["recovery_frac"] for r in rows]))
+    log(f"[LoRA] ==> α (no LoRA, local)   = {alpha:.6e}  R²={r2a:.4f}   "
+        f"power p={pb:.3f} R²={r2pb:.4f}")
+    log(f"[LoRA] ==> α_LoRA     (local)   = {alpha_lora:.6e}  R²={r2b:.4f}   "
+        f"power p={pa:.3f} R²={r2pa:.4f}")
+    log(f"[LoRA] ==> α shrink factor = {alpha/(alpha_lora+1e-30):.2f}×  "
         f"({'LoRA reduces SCT bias' if alpha_lora < alpha else 'no reduction'})")
+    log(f"[LoRA] ==> median recovery fraction = {med_recovery:.1%} (roughly constant across η ⇒ "
+        f"LoRA scales the concave curve down, preserving its shape)")
 
     result = {"cfg": cfg.__dict__, "baseline_mse": base_loss, "lora_rank": LORA_RANK,
               "rows": rows, "alpha": alpha, "alpha_lora": alpha_lora,
-              "alpha_shrink": alpha / (alpha_lora + 1e-30)}
+              "alpha_shrink": alpha / (alpha_lora + 1e-30),
+              "power_before": {"A": Ab, "p": pb, "r2": r2pb},
+              "power_after": {"A": Aa, "p": pa, "r2": r2pa},
+              "median_recovery": med_recovery}
     save_json("lora_arm.json", result)
     _plot(result)
     return result
@@ -129,14 +142,32 @@ def _plot(result):
     x = np.array([r["mean_disc"] for r in rows])
     yb = np.array([r["dL_before"] for r in rows])
     ya = np.array([r["dL_after"] for r in rows])
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.scatter(x, yb, s=35, color="C3", label="ΔL SCT-only")
-    ax.scatter(x, ya, s=35, color="C0", label="ΔL after recovery-LoRA")
-    xx = np.linspace(0, x.max(), 50)
-    ax.plot(xx, result["alpha"] * xx, "C3--", label=f"α={result['alpha']:.3g}")
-    ax.plot(xx, result["alpha_lora"] * xx, "C0--", label=f"α_LoRA={result['alpha_lora']:.3g}")
+    rec = np.array([r["recovery_frac"] for r in rows])
+    pb, pa = result["power_before"], result["power_after"]
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+    # panel 1: distortion curves + power-law fits (the honest concave shape)
+    ax = axes[0]
+    xx = np.linspace(x[x > 0].min() * 0.7, x.max(), 100)
+    ax.scatter(x, yb, s=40, color="C3", zorder=5, label="ΔL SCT-only (measured)")
+    ax.scatter(x, ya, s=40, color="C0", zorder=5, label="ΔL after recovery-LoRA")
+    ax.plot(xx, pb["A"] * xx ** pb["p"], "C3-",
+            label=f"power (1−η)^{pb['p']:.2f}, R²={pb['r2']:.3f}")
+    ax.plot(xx, pa["A"] * xx ** pa["p"], "C0-",
+            label=f"power (1−η)^{pa['p']:.2f}, R²={pa['r2']:.3f}")
+    ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlabel("mean discarded energy (1−η)"); ax.set_ylabel("ΔL")
-    ax.set_title(f"Recovery-LoRA shrinks α by {result['alpha_shrink']:.1f}×")
+    ax.set_title(f"Recovery-LoRA: concave (power-law), α↓{result['alpha_shrink']:.1f}×")
+    ax.legend(fontsize=7)
+    # panel 2: recovery fraction (the real message — roughly constant)
+    ax = axes[1]
+    ax.plot(x, 100 * rec, "o-", color="C2")
+    ax.axhline(100 * result["median_recovery"], ls="--", color="gray",
+               label=f"median {result['median_recovery']:.0%}")
+    ax.set_xscale("log")
+    ax.set_xlabel("mean discarded energy (1−η)")
+    ax.set_ylabel("bias recovered by LoRA (%)")
+    ax.set_ylim(0, 100)
+    ax.set_title("LoRA recovery fraction vs compression")
     ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(os.path.join(RESULTS_DIR, "lora_arm.png"), dpi=110)

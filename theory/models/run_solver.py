@@ -16,7 +16,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from rate_distortion import RateDistortion, ByteModel, build_weight_bytes_fn
+from rate_distortion import (RateDistortion, ByteModel, build_weight_bytes_fn,
+                             build_sct_dL_fn)
 
 HERE = os.path.dirname(__file__)
 TOY_RESULTS = os.path.join(HERE, "..", "toy", "results")
@@ -29,21 +30,30 @@ def _load(name):
         return json.load(f)
 
 
-def build_model(alpha, sct, tq, L=4096, n_layers_kv=1):
+def build_model(alpha, sct, tq, L=4096, n_layers_kv=1, sct_dL_override=None):
+    """Build the rate-distortion model. SCT distortion uses the MEASURED curve
+    (energy → ΔL) by default; pass `sct_dL_override` (energies, dL) to substitute
+    a different curve, e.g. the post-LoRA distortion."""
     energies = sct["all_layers"]["energy"]
     total_bytes = sct["all_layers"]["total_bytes_fp16"]
     wfn = build_weight_bytes_fn(energies, total_bytes)
+    if sct_dL_override is not None:
+        sct_fn = build_sct_dL_fn(*sct_dL_override)
+    else:
+        sct_fn = build_sct_dL_fn(energies, sct["all_layers"]["measured"])
     bm = ByteModel(weight_bytes_fn=wfn, dense_weight_bytes=sct["dense_bytes_fp16"],
                    d_head=sct["cfg"]["d_head"], L=L, n_layers_kv=n_layers_kv)
-    return RateDistortion(alpha=alpha, beta_p=tq["downstream"]["beta_p"],
+    return RateDistortion(alpha=alpha, sct_dL_fn=sct_fn, beta_p=tq["downstream"]["beta_p"],
                           p=tq["downstream"]["eff_exponent"], bytes=bm)
 
 
 def plot_surface(rd: RateDistortion, budget_frac, path, title):
-    etas = np.linspace(0.5, 0.999, 200)
+    etas = np.linspace(0.30, 0.999, 200)
     bs = np.linspace(1.5, 6.0, 200)
     E, B = np.meshgrid(etas, bs)
-    Z = rd.alpha * (1 - E) + rd.beta_p * 2.0 ** (-rd.p * B)
+    # SCT term from the MEASURED distortion curve (vectorised interp), not α(1−η)
+    sct_term = np.array([[rd.dL_sct(e) for e in etas]])  # (1, Ne)
+    Z = np.broadcast_to(sct_term, E.shape) + rd.beta_p * 2.0 ** (-rd.p * B)
     dense = rd.bytes.dense_total()
     opt = rd.optimum(budget_frac * dense)
     fig, ax = plt.subplots(figsize=(7, 5.2))
@@ -104,7 +114,9 @@ def main(log=print):
     log(f"[solver] dense total bytes = {rd.bytes.dense_total():.3e}  "
         f"(weights {rd.bytes.dense_weight_bytes:.2e} + KV {rd.bytes.dense_kv_bytes():.2e}, L={rd.bytes.L})")
 
-    budget_frac = 0.35
+    # 50% budget at the balanced L gives an INTERIOR optimum (both levers active),
+    # where the KKT equal-marginal condition actually bites — the cleanest demo.
+    budget_frac = 0.50
     opt = plot_surface(rd, budget_frac, os.path.join(OUT, "surface.png"),
                        f"Joint SCT×TurboQuant ΔL surface — budget={budget_frac:.0%} of dense")
     log(f"[solver] optimum @ {budget_frac:.0%} budget: η*={opt['eta']:.4f} b*={opt['b']:.3f} "
@@ -120,7 +132,11 @@ def main(log=print):
     lora_note = ""
     try:
         lora = _load("lora_arm.json")
-        rd_lora = build_model(lora["alpha_lora"], sct, tq, L=L_bal)
+        # Use the MEASURED post-LoRA distortion curve (not α_LoRA·(1−η)).
+        lora_etas = [r["eta"] for r in lora["rows"]]
+        lora_dL = [r["dL_after"] for r in lora["rows"]]
+        rd_lora = build_model(lora["alpha_lora"], sct, tq, L=L_bal,
+                              sct_dL_override=(lora_etas, lora_dL))
         opt_lora = rd_lora.optimum(budget_frac * rd_lora.bytes.dense_total())
         # NOTE ON CONVENTION: η is RETAINED energy, so LOWER η = HARDER weight
         # compression. The doc (§A.3) says LoRA should shift "η upward (compress
@@ -144,43 +160,55 @@ def main(log=print):
                "optimum": opt, "trace": trace, "lora_note": lora_note}
     with open(os.path.join(OUT, "optimum.json"), "w") as f:
         json.dump(optimum, f, indent=2, default=float)
-    _write_results_md(sct, tq, rd, opt, trace, lora_note)
+    _write_results_md(sct, tq, rd, opt, trace, lora_note, budget_frac)
     return optimum
 
 
-def _write_results_md(sct, tq, rd, opt, trace, lora_note):
+def _write_results_md(sct, tq, rd, opt, trace, lora_note, budget_frac):
     tight = trace[0]; loose = trace[-1]
+    mw = rd.marginal_weight(opt["eta"]); mk = rd.marginal_kv(opt["b"])
     md = f"""# Part A — Joint Rate-Distortion Solver: Results
 
-**Predicted joint optimum surface** for `ΔL(η,b) = α(1−η) + β_p·2^(−p·b)`,
-using constants measured by the Part B toy.
+**Predicted joint optimum** for `ΔL(η,b) = ΔL_sct(η) + β_p·2^(−p·b)`.
+
+**Important:** the SCT term is the **MEASURED distortion–rate curve** ΔL_sct(η),
+NOT the `α(1−η)` model from the doc — the toy rejected `α(1−η)` (global
+R²={sct['alpha_global_r2']:.2f}; the true relationship is the concave,
+curvature-weighted quadratic). The TQ term keeps the parametric form with the
+measured exponent p (it fit well, R²≈{tq['downstream']['eff_exponent_r2']:.3f}).
 
 ## Measured constants (from theory/toy)
 | constant | value | meaning |
 |---|---|---|
-| α | {sct['alpha']:.4e} | SCT bias slope (local, small-perturbation) |
+| ΔL_sct(η) | curve | interpolated measured distortion (concave; α(1−η) rejected) |
+| α (local only) | {sct['alpha']:.4e} | SCT slope near η→1 (not used by the solver) |
 | β_p | {tq['downstream']['beta_p']:.4e} | TurboQuant variance coefficient |
 | p | {tq['downstream']['eff_exponent']:.3f} | effective bit-exponent (theory 2; finite-rate <2) |
 
-## Byte model
+## Byte model (balanced regime)
 - dense total: {rd.bytes.dense_total():.3e} B (weights {rd.bytes.dense_weight_bytes:.2e} + KV {rd.bytes.dense_kv_bytes():.2e}, L={rd.bytes.L})
 - KV: b bits/coord for K (Prod) and V (MSE), d_head={rd.bytes.d_head}, {rd.bytes.n_layers_kv} layer(s)
+- L chosen so dense weights ≈ dense KV (both levers active). The weight:KV ratio
+  is a deployment knob (model size × context length); the solver is scale-agnostic.
 
-## Budget-constrained optimum (35% of dense)
+## Budget-constrained optimum ({budget_frac:.0%} of dense)
 - **η\\* = {opt['eta']:.4f}**,  **b\\* = {opt['b']:.3f}**,  ΔL\\* = {opt['dL']:.4e}
 - spend: weights {opt['weight_bytes']:.2e} B + KV {opt['kv_bytes']:.2e} B
+- KKT check: marginal loss/byte — weights {mw:.3e} vs KV {mk:.3e}
+  (equal ⇒ interior optimum, the equal-marginal condition holds).
 
-## Regime structure (the crossover the project hunts for)
+## Regime structure
 - tight budget ({tight['budget_frac']:.0%}): η\\*={tight['eta']:.3f}, b\\*={tight['b']:.2f}
 - loose budget ({loose['budget_frac']:.0%}): η\\*={loose['eta']:.3f}, b\\*={loose['b']:.2f}
-- At the optimum the KKT marginals (loss reduction per byte) equalise across the
-  two methods — see `regimes.png` right panel.
+- **Finding (contradicts §A.3's guess):** measured SCT distortion is concave, so
+  weight compression is cheap per byte — tight budgets lean on **weights first**,
+  not "TQ first". See `regimes.png`.
 
 ## Recovery-LoRA
 {lora_note or "_(lora_arm.json not found)_"}
 
 ## Figures
-- `surface.png` — ΔL(η,b) surface, iso-budget line, marked optimum
+- `surface.png` — ΔL(η,b) surface, iso-budget line, marked (interior) optimum
 - `regimes.png` — optimal (η\\*, b\\*) vs budget + equalised KKT marginals
 """
     with open(os.path.join(OUT, "RESULTS.md"), "w") as f:

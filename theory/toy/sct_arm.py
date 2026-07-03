@@ -33,10 +33,13 @@ from linear_attn_model import (ToyConfig, LinearAttnToy, LAYER_NAMES,
                                train_student, population_loss,
                                quadratic_vs_measured_deltaL, mse_loss)
 from sct_utils import sct_truncate, discarded_energy
-from common import Tee, RESULTS_DIR, get_device, seed_all, fit_through_origin, save_json
+from common import (Tee, RESULTS_DIR, get_device, seed_all, fit_through_origin,
+                    fit_power, save_json)
 
 
-ENERGIES = [0.50, 0.70, 0.80, 0.90, 0.95, 0.98, 0.99, 0.995, 0.999]
+# Sweep spans aggressive (η=0.30) to near-lossless (η=0.999) so the measured
+# distortion–rate curve the solver consumes isn't truncated at the data edge.
+ENERGIES = [0.30, 0.40, 0.50, 0.70, 0.80, 0.90, 0.95, 0.98, 0.99, 0.995, 0.999]
 SMALL_PERTURB_MAX_DISC = 0.06  # α is the LOCAL slope in the valid-linearisation regime
 
 
@@ -139,9 +142,25 @@ def run(sigma_kind: str = "iso", steps: int = 3000, eval_batch: int = 4096,
     mask = x <= SMALL_PERTURB_MAX_DISC
     alpha, r2 = fit_through_origin(x[mask], y[mask])
     alpha_global, r2_global = fit_through_origin(x, y)
-    log(f"[SCT] ==> α (local, discarded≤{SMALL_PERTURB_MAX_DISC}) = {alpha:.6e}  R²={r2:.4f}")
-    log(f"[SCT]     α (global through-origin)         = {alpha_global:.6e}  R²={r2_global:.4f}")
-    log(f"[SCT]     (global R² poor ⇒ ΔL is concave in (1−η): curvature-weighting)")
+    # The scalar α(1−η) model is REJECTED globally; a power law A(1−η)^p is the
+    # better 1-D summary, but the EXACT model is the curvature-weighted quadratic
+    # (panel 1). Report all three so the model-selection is explicit.
+    A_pow, p_pow, r2_pow = fit_power(x, y)
+    log(f"[SCT] model selection for ΔL vs (1−η), all-layers:")
+    log(f"[SCT]   linear α(1−η) GLOBAL : α={alpha_global:.4e}  R²={r2_global:.4f}  (REJECTED)")
+    log(f"[SCT]   linear α(1−η) LOCAL  : α={alpha:.4e}  R²={r2:.4f}  (valid only for discarded≤{SMALL_PERTURB_MAX_DISC})")
+    log(f"[SCT]   power  A(1−η)^p      : A={A_pow:.4e} p={p_pow:.3f}  R²={r2_pow:.4f}  (better 1-D summary; concave)")
+    log(f"[SCT]   EXACT model = curvature-weighted quadratic tr(ΔW H ΔW) — see panel 1 / known-H check")
+
+    # ---- across-layer coupling: is Σ per-layer quad = all-layers ΔL? ----------
+    sumq = np.zeros(len(ENERGIES))
+    for n in LAYER_NAMES:
+        sumq += np.array(per_layer[n]["quadratic"])
+    allm = np.array(allL["measured"])
+    ratio = allm / (sumq + 1e-30)
+    log(f"[SCT] across-layer coupling: measured / Σ(per-layer quad) ranges "
+        f"{ratio.min():.2f}–{ratio.max():.2f} (｟1 ⇒ SUB-additive across layers at "
+        f"aggressive η; →1 as η→1)")
 
     # ---- known-H check on the READOUT layer -----------------------------------
     # Readout is the last layer: ΔO = h ΔW^T exactly, so quadratic ΔL must equal
@@ -177,6 +196,9 @@ def run(sigma_kind: str = "iso", steps: int = 3000, eval_batch: int = 4096,
         "baseline_mse": base_loss,
         "alpha": alpha, "alpha_r2": r2,
         "alpha_global": alpha_global, "alpha_global_r2": r2_global,
+        "power_A": A_pow, "power_p": p_pow, "power_r2": r2_pow,
+        "across_layer_ratio_min": float(ratio.min()),
+        "across_layer_ratio_max": float(ratio.max()),
         "energies": ENERGIES, "per_layer": per_layer, "all_layers": allL,
         "layer_dims": layer_dims, "dense_bytes_fp16": dense_bytes,
         "known_h_readout_relerr": kh_relerr,
@@ -213,18 +235,22 @@ def _plot(result, sigma_kind):
     ax.set_ylabel("quadratic ΔL")
     ax.set_title("(2) Eckart–Young loss law")
     ax.legend(fontsize=7)
-    # panel 3: all-layers ΔL vs (1-η) with α fit
+    # panel 3: all-layers distortion–rate curve + model comparison
     ax = axes[2]
     x = np.array(result["all_layers"]["mean_discarded_frac"])
     y = np.array(result["all_layers"]["measured"])
-    ax.scatter(x, y, s=25, color="C3", label="measured (all layers)")
-    xx = np.linspace(0, x.max(), 50)
-    ax.plot(xx, result["alpha"] * xx, "k--",
-            label=f"α·(1−η), α={result['alpha']:.3g}, R²={result['alpha_r2']:.3f}")
+    ax.scatter(x, y, s=30, color="C3", zorder=5, label="measured (all layers)")
+    xx = np.linspace(x[x > 0].min() * 0.5, x.max(), 100)
+    # power-law fit (good) vs linear α(1−η) (poor, global) — on log axes
+    ax.plot(xx, result["power_A"] * xx ** result["power_p"], "C0-",
+            label=f"power A(1−η)^{result['power_p']:.2f}, R²={result['power_r2']:.3f}")
+    ax.plot(xx, result["alpha_global"] * xx, "k--",
+            label=f"linear α(1−η), R²={result['alpha_global_r2']:.2f} (rejected)")
+    ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlabel("mean discarded energy fraction (1−η)")
     ax.set_ylabel("ΔL")
-    ax.set_title("(3) estimate α")
-    ax.legend(fontsize=8)
+    ax.set_title("(3) SCT distortion–rate: concave, not linear")
+    ax.legend(fontsize=7)
     fig.suptitle(f"SCT arm — Σ_x = {sigma_kind}", fontsize=12)
     fig.tight_layout()
     path = os.path.join(RESULTS_DIR, f"sct_arm_{sigma_kind}.png")

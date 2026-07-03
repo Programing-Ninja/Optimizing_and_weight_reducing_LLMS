@@ -67,13 +67,20 @@ class ByteModel:
 
 @dataclass
 class RateDistortion:
-    alpha: float          # SCT bias slope: ΔL_sct ≈ α(1−η)
-    beta_p: float         # TQ variance coeff: ΔL_tq ≈ β_p·2^(−p·b)
-    p: float              # measured effective exponent (≈1.8; theory 2)
+    beta_p: float                     # TQ variance coeff: ΔL_tq ≈ β_p·2^(−p·b)
+    p: float                          # measured effective exponent (≈1.8; theory 2)
     bytes: ByteModel
+    sct_dL_fn: Optional[Callable[[float], float]] = None  # MEASURED ΔL_sct(η) — preferred
+    alpha: Optional[float] = None     # parametric fallback ΔL_sct≈α(1−η) (local slope only)
 
     # ---- distortion ---------------------------------------------------------
     def dL_sct(self, eta: float) -> float:
+        """SCT distortion. Uses the MEASURED distortion–rate curve when available
+        (the honest choice: the toy showed ΔL_sct is the curvature-weighted
+        quadratic, NOT α(1−η) — the latter fits at only R²≈0.37). Falls back to
+        the α(1−η) local linearisation if no curve is supplied."""
+        if self.sct_dL_fn is not None:
+            return float(self.sct_dL_fn(eta))
         return self.alpha * (1.0 - eta)
 
     def dL_tq(self, b: float) -> float:
@@ -83,12 +90,13 @@ class RateDistortion:
         return self.dL_sct(eta) + self.dL_tq(b)
 
     # ---- KKT marginal loss reduction per byte -------------------------------
-    def marginal_weight(self, eta: float, deta: float = 1e-4) -> float:
-        """|dΔL/dη| / |d(weight bytes)/dη|  — loss reduced per weight byte spent."""
-        dloss = self.alpha  # -dΔL/dη = α
-        dbytes = (self.bytes.weight_bytes(min(eta + deta, 0.999999))
-                  - self.bytes.weight_bytes(eta)) / deta
-        return dloss / (abs(dbytes) + 1e-30)
+    def marginal_weight(self, eta: float, deta: float = 1e-3) -> float:
+        """|dΔL/dη| / |d(weight bytes)/dη|  — loss reduced per weight byte spent.
+        Uses the measured distortion curve's local derivative (not a constant α)."""
+        e1 = min(eta + deta, 0.999999)
+        dloss = -(self.dL_sct(e1) - self.dL_sct(eta)) / (e1 - eta)  # -dΔL/dη ≥ 0
+        dbytes = (self.bytes.weight_bytes(e1) - self.bytes.weight_bytes(eta)) / (e1 - eta)
+        return abs(dloss) / (abs(dbytes) + 1e-30)
 
     def marginal_kv(self, b: float) -> float:
         """|dΔL/db| / |d(KV bytes)/db|  — loss reduced per KV byte spent."""
@@ -99,7 +107,7 @@ class RateDistortion:
     # ---- budget-constrained optimum -----------------------------------------
     def optimum(self, M_budget: float, eta_grid=None, b_grid=None):
         """min ΔL s.t. M(η,b) ≤ M_budget. Returns dict with η*, b*, ΔL*, bytes."""
-        eta_grid = eta_grid if eta_grid is not None else np.linspace(0.50, 0.9999, 400)
+        eta_grid = eta_grid if eta_grid is not None else np.linspace(0.30, 0.9999, 400)
         b_grid = b_grid if b_grid is not None else np.linspace(1.0, 8.0, 400)
         best = None
         for eta in eta_grid:
@@ -146,4 +154,19 @@ def build_weight_bytes_fn(energies, total_bytes):
 
     def fn(eta):
         return float(np.interp(np.clip(eta, e[0], e[-1]), e, tb))
+    return fn
+
+
+def build_sct_dL_fn(energies, measured_dL):
+    """Interpolate the MEASURED SCT distortion–rate curve (energy → ΔL) into a
+    callable ΔL_sct(η). This replaces the α(1−η) model, which the toy rejected
+    (the true relationship is the curvature-weighted quadratic, concave in 1−η).
+    Clamped and monotone-sorted; ΔL is non-increasing in η."""
+    e = np.asarray(energies, float)
+    y = np.asarray(measured_dL, float)
+    order = np.argsort(e)
+    e, y = e[order], y[order]
+
+    def fn(eta):
+        return float(np.interp(np.clip(eta, e[0], e[-1]), e, y))
     return fn

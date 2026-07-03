@@ -63,6 +63,21 @@ def fit_affine(x, y):
     return float(a), float(b), r2
 
 
+def fit_power(x, y):
+    """Least-squares y ≈ A·x^p (log-log linear). Returns (A, p, R2) where R2 is
+    measured in LINEAR space (so it's comparable to the through-origin fit)."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    m = (x > 0) & (y > 0)
+    p, logA = np.polyfit(np.log(x[m]), np.log(y[m]), 1)
+    A = float(np.exp(logA))
+    pred = A * x[m] ** p
+    ss_res = float(((y[m] - pred) ** 2).sum())
+    ss_tot = float(((y[m] - y[m].mean()) ** 2).sum())
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    return A, float(p), r2
+
+
 def save_json(name: str, obj: dict):
     path = os.path.join(RESULTS_DIR, name)
     with open(path, "w") as f:

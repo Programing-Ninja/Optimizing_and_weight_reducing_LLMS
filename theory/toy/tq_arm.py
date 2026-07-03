@@ -104,6 +104,7 @@ def run(steps: int = 6000, eval_batch: int = 8192, log=print, device=None):
     # ---- (2)+(3a) inner-product estimator: unbiasedness + variance ------------
     log("[TQ] --- (2) unbiasedness + (3a) variance of <q,k̃> estimator ---")
     prod_rows = []
+    err_hist = None
     with torch.no_grad():
         true_scores = (Q @ K.transpose(-2, -1))  # (B,T,T) exact q·k
     for b in PROD_BITS:
@@ -123,6 +124,12 @@ def run(steps: int = 6000, eval_batch: int = 8192, log=print, device=None):
         prod_rows.append({"bits": b, "mean_err": mean_err, "se": se, "var": var,
                           "rel_bias": abs(mean_err) / math.sqrt(var + 1e-30),
                           "bias2_over_var": bias2_over_var})
+        if b == 3:  # capture the error distribution to SHOW unbiasedness
+            std = math.sqrt(var)
+            counts, edges = np.histogram(err.cpu().numpy(), bins=80,
+                                         range=(-4 * std, 4 * std))
+            err_hist = {"bits": b, "counts": counts.tolist(), "edges": edges.tolist(),
+                        "mean": mean_err, "std": std}
         log(f"[TQ]   b={b}  mean_err={mean_err:+.4e}  Var={var:.4e}  "
             f"bias²/Var={bias2_over_var:.2e}  2^(-2b)={2**(-2*b):.2e}")
     log("[TQ]   (bias²/Var ~1e-5 ⇒ estimator is unbiased for practical purposes: "
@@ -159,7 +166,7 @@ def run(steps: int = 6000, eval_batch: int = 8192, log=print, device=None):
         "mse_law": {"rows": mse_rows, "log2D_vs_b_slope": slope_mse,
                     "log2D_vs_b_r2": r2_mse, "c": c_mse, "c_r2": r2_c},
         "prod_estimator": {"rows": prod_rows, "log2Var_vs_b_slope": slope_var,
-                           "log2Var_vs_b_r2": r2_var},
+                           "log2Var_vs_b_r2": r2_var, "err_hist": err_hist},
         "downstream": {"rows": kv_rows, "beta": beta, "beta_r2": r2_beta,
                        "eff_exponent": eff_exponent, "beta_p": float(2.0 ** log2_betap),
                        "eff_exponent_r2": r2_p},
@@ -181,15 +188,21 @@ def _plot(result):
                 label=f"c·2^(−2b), slope≈{result['mse_law']['log2D_vs_b_slope']:.2f}")
     ax.set_xlabel("bits b"); ax.set_ylabel("relative distortion D(b)")
     ax.set_title("(1) MSE recon: D ~ 2^(−2b)"); ax.legend(fontsize=8)
-    # (2) unbiasedness: mean error ± SE
+    # (2) unbiasedness: the FULL error distribution — wide (variance), centred at 0
     ax = axes[1]
-    b = np.array([r["bits"] for r in result["prod_estimator"]["rows"]])
-    me = np.array([r["mean_err"] for r in result["prod_estimator"]["rows"]])
-    se = np.array([r["se"] for r in result["prod_estimator"]["rows"]])
-    ax.errorbar(b, me, yerr=se, fmt="o", capsize=4, label="mean score error ± SE")
-    ax.axhline(0, color="k", lw=1, ls="--")
-    ax.set_xlabel("bits b"); ax.set_ylabel("E[<q,k̃> − <q,k>]")
-    ax.set_title("(2) estimator is unbiased"); ax.legend(fontsize=8)
+    h = result["prod_estimator"]["err_hist"]
+    if h is not None:
+        edges = np.array(h["edges"]); counts = np.array(h["counts"])
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        width = edges[1] - edges[0]
+        ax.bar(centers, counts, width=width, color="C0", alpha=0.6,
+               label=f"score errors (b={h['bits']})")
+        ax.axvline(0, color="k", lw=1.5, ls="--", label="0 (unbiased target)")
+        ax.axvline(h["mean"], color="C3", lw=1.5,
+                   label=f"mean={h['mean']:.2e}\n(bias/std={abs(h['mean'])/h['std']:.1e})")
+        ax.set_xlabel("<q,k̃> − <q,k>"); ax.set_ylabel("count")
+        ax.set_title("(2) unbiased: mean≈0, bias ≪ std")
+        ax.legend(fontsize=7)
     # (3) downstream beta
     ax = axes[2]
     xr = np.array([r["rate"] for r in result["downstream"]["rows"]])

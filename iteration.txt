@@ -376,3 +376,54 @@ NOT DONE / NEXT
   * Fold findings 1-4 back into THEORETICAL_ANALYSIS.md prose (optional).
   * When HPC returns: estimate (α,β) from 2-3 small Llama points, predict
     frontier with run_solver, overlay vs run_pareto.py (roadmap step 7).
+
+════════════════════════════════════════════════════════════════════════
+[2026-07-03] ITERATION (rev 2) — Figure/model review + corrections
+════════════════════════════════════════════════════════════════════════
+Triggered by user review of the figures. Three real discrepancies found and
+fixed; the fixes changed a headline result, so documenting carefully.
+
+DISCREPANCY 1 — SCT "estimate α" panel: measured points sit far off the α(1−η)
+  line. ROOT CAUSE: α(1−η) is simply the WRONG model. ΔL vs (1−η) is CONCAVE
+  (curvature-weighting). Fits: linear global R²=0.23 (iso), −2.63 (aniso);
+  power (1−η)^0.57 R²=0.55; the EXACT model is the curvature-weighted quadratic
+  tr(ΔW H ΔW) (panel 1, y=x, verified 7e-8). None of linear/power/sqrt/log is a
+  good 1-D summary — the scalar (1−η) throws away the curvature weighting.
+  FIX: (a) panel 3 now log-log, shows measured curve + power fit + REJECTED
+  linear; (b) reporting lists all three models explicitly; (c) — important —
+  the Part A solver now consumes the MEASURED distortion-rate curve ΔL_sct(η)
+  (interpolated), NOT α(1−η). rate_distortion.RateDistortion gained sct_dL_fn.
+
+  BONUS FINDING: all-layers-together truncation is SUB-ADDITIVE ACROSS LAYERS
+  too — measured ΔL is 0.19–1.04× the sum of per-layer quadratics (layer
+  perturbations partially cancel), so even the per-layer-exact quadratic doesn't
+  sum trivially. Two levels of sub-additivity: across layers, and SCT×TQ.
+
+DISCREPANCY 2 — lora_arm.png looks logarithmic/concave, not linear. CORRECT:
+  ΔL_before ~ (1−η)^0.74 (R²=0.996), genuinely concave; my straight α line was
+  misleading. FIX: log-log plot with power-law fits + a second panel showing
+  recovery fraction (~84% median, roughly constant across η -> LoRA scales the
+  concave curve down, preserving shape).
+
+DISCREPANCY 3 — tq_arm: unbiasedness not visible. FIX: replaced the mean±SE
+  panel with the full score-error HISTOGRAM at b=3 — a wide symmetric bell
+  centred on 0 (mean −3.7e-4, std 0.45, bias/std 8e-4). Now obviously unbiased.
+
+KNOCK-ON: solver optimum changed. With the measured (concave) SCT curve, SCT
+  weight compression is CHEAP per byte, so the optimum leans on WEIGHTS FIRST at
+  tight budgets — this CONTRADICTS §A.3's guess ("tight budgets lean on TQ
+  first"). New finding. Headline demo now at 50% budget, balanced L=160, giving
+  an INTERIOR optimum η*=0.839 b*=5.35 where KKT marginals equalise to 3 sig
+  figs (weights 1.571e-9 ≈ KV 1.565e-9). LoRA (cheaper weights) now shifts η*
+  strongly: 0.839 -> 0.300 (compress weights to floor, push KV to 8-bit).
+
+FILES TOUCHED: sct_arm.py (panel3+model-selection+across-layer), lora_arm.py
+  (power fits+recovery panel), tq_arm.py (error histogram), common.py
+  (fit_power), rate_distortion.py (sct_dL_fn + build_sct_dL_fn + marginal_weight
+  from curve), run_solver.py (measured curve, budget 50%, interior optimum),
+  run_experiments.py (corrected master RESULTS.md). Extended SCT ENERGIES down
+  to 0.30 so the solver's distortion curve isn't truncated at the data edge.
+
+MODEL-SELECTION SUMMARY (for a future writeup):
+  SCT distortion  : use MEASURED curve (or exact quadratic). α(1−η) rejected.
+  TQ  distortion  : β_p·2^(−p·b) with measured p≈1.83 — GOOD parametric fit.

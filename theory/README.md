@@ -18,10 +18,12 @@ consolidated summary in [`theory/RESULTS.md`](RESULTS.md).
 
 | Doc claim | Verdict from the toy |
 |---|---|
-| **A.1** loss is locally quadratic in ΔW | **Confirmed as an equality** (cross-term ~1e-4; known-H readout check to 7e-8; Eckart–Young control exact). **Refinement:** ΔL is *concave* in (1−η) → α is a local slope. |
-| **A.2** TurboQuant = unbiased variance ~2^(−2b) | **Confirmed** (bias²/var ~1e-5), but the **effective exponent is p≈1.83, not 2** (finite-rate Lloyd–Max). |
+| **A.1** loss is locally quadratic in ΔW | **Confirmed as an equality** (cross-term ~1e-4; known-H readout check to 7e-8; Eckart–Young control exact). |
+| **A.1 model** ΔL ≈ α(1−η) | **REJECTED** — ΔL is concave in (1−η) (linear R²=0.23 iso, **−2.6** aniso). The exact model is the curvature-weighted quadratic `tr(ΔW H ΔW)`; a power law `(1−η)^0.6` is a rough 1-D summary. **The solver uses the measured curve, not α(1−η).** Truncating all layers at once is also *sub-additive across layers* (measured is 0.2–1.0× the sum of per-layer quadratics). |
+| **A.2** TurboQuant = unbiased variance ~2^(−2b) | **Confirmed** (bias²/var ~1e-5; the error histogram is a wide bell centred on 0), but the **effective exponent is p≈1.83, not 2** (finite-rate Lloyd–Max). |
 | **A.3** SCT bias + TQ variance are additive | **Mostly additive** (median cross 5%) but **sub-additive coupling up to 46%** at aggressive joint compression — compressing weights first makes the KV cache cheaper to quantize. |
-| Recovery-LoRA shrinks α | **Confirmed: 5.4× smaller α**, and the solver then compresses weights harder (η* down) and reallocates bytes to KV. |
+| Recovery-LoRA shrinks α | **Confirmed: ~84% of the bias recovered, 5.4× smaller local α**; concave shape preserved. In the solver LoRA then compresses weights harder (η\* 0.84→0.30) and reallocates bytes to KV. |
+| **A.3 guess** "tight budgets lean on TQ first" | **CONTRADICTED** — measured SCT distortion is concave (cheap per byte), so tight budgets lean on **weight compression first**. |
 
 > **Terminology flag (raised per workspace rule 6):** §A.3 says recovery-LoRA
 > should push "η upward (compress weights harder)". Since η is *retained* energy,
