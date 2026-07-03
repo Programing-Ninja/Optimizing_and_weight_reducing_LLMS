@@ -320,3 +320,59 @@ spending A100-hours.
 
 NOT done: no theory/toy or theory/models code yet; alpha/beta unmeasured; additivity
 untested. Next: scaffold theory/toy/ + theory/models/ and run roadmap steps 1-4.
+
+════════════════════════════════════════════════════════════════════════
+[2026-07-03] ITERATION — Implemented Part A + Part B (theory/), ran in ml_lab
+════════════════════════════════════════════════════════════════════════
+
+WHAT WAS BUILT
+  theory/toy/     : gaussian_data, linear_attn_model, sct_utils, common,
+                    sct_arm, tq_arm, combined_arm, lora_arm
+  theory/models/  : rate_distortion (RateDistortion+ByteModel), run_solver
+  theory/run_experiments.py : orchestrator -> theory/RESULTS.md
+  Toy = linear-attention + linear-MLP on Gaussian tokens (d=64 everywhere so
+  d_head has TurboQuant codebooks). Trained to MSE ~1.6e-8 (cosine LR) so the
+  student sits at a true optimum. Full run: 63s on GPU.
+
+KEY DESIGN WIN
+  Loss is EXACTLY quadratic in each weight matrix (others fixed) -> A.1's
+  "loss locally quadratic in ΔW" becomes a checkable EQUALITY, not a hand-wave.
+
+WHAT WORKED (measured)
+  * A.1 CONFIRMED as equality: per-layer |cross|/quadratic ~1e-4; readout
+    known-H check quad==tr(ΔW G_h ΔWᵀ) to 7e-8; Eckart-Young control
+    ΔL==Σσ² to 1e-3 (MC noise). α_iso=7.83e-4 (R²=0.98 local).
+  * A.2 CONFIRMED: estimator bias²/var ~1e-5 (unbiased); β=3.59e-3.
+  * A.3 additive in operating regime (median cross 5%).
+  * Recovery-LoRA shrinks α 5.4× (7.83e-4 -> 1.46e-4), recovers 80-97% bias.
+  * Part A solver: at 35% budget η*=0.708 b*=3.58; regime structure clean;
+    KKT marginals equalise; LoRA pushes η* down to 0.640 (compress harder).
+
+WHAT DIDN'T MATCH THE DOC (findings to fold back into THEORETICAL_ANALYSIS.md)
+  1. ΔL is CONCAVE in (1-η), not linear: small-σ (last-discarded) modes carry
+     disproportionate loss-curvature. So α is a LOCAL slope; global through-
+     origin R²=0.37. The α(1-η) model is only valid small-perturbation.
+  2. TurboQuant effective exponent p≈1.83, NOT the asymptotic 2. The codebook's
+     own finite-rate Lloyd-Max distortion has the same slope. Part A now uses
+     ΔL_TQ = β_p·2^(−p·b) with measured p.
+  3. Additivity is regime-dependent: SUB-additive coupling up to 46% at the
+     aggressive corner (η=0.9,b=2). Sign is negative — compressing weights first
+     lowers KV rank so quantization noise costs LESS loss. Beneficial for the
+     joint budget (Part E q1 answered: coupled at aggressive compression).
+  4. TERMINOLOGY (workspace rule 6): §A.3 "shift η upward (compress harder)" is
+     inverted — η is retained energy, so harder compression = η DOWN. Solver
+     confirms the intent (η* 0.708->0.640); doc wording should be fixed.
+  5. Anisotropic Σ_x: α_aniso=3.03e-3 with poor local R²=0.30 — curvature-
+     weighting is much stronger, linear α model degrades further.
+
+CAVEAT ON PART A BYTE MODEL
+  Toy weights (5×64×64) are trivially cheap vs a multi-k-token KV cache, which
+  makes the optimum degenerate (η->1). Solver demo therefore uses a BALANCED
+  context L=160 (dense weights ≈ dense KV) so both levers are active. The
+  weight:KV byte ratio is a deployment knob (model size × context length) — the
+  solver itself is scale-agnostic; feed real (α,β,byte-curves) when HPC returns.
+
+NOT DONE / NEXT
+  * Fold findings 1-4 back into THEORETICAL_ANALYSIS.md prose (optional).
+  * When HPC returns: estimate (α,β) from 2-3 small Llama points, predict
+    frontier with run_solver, overlay vs run_pareto.py (roadmap step 7).

@@ -9,7 +9,12 @@ Here I try to find ways to get better weight and KV cache optimization, starting
 
 ## Theory track (laptop, no HPC)
 
-- `theory/THEORETICAL_ANALYSIS.md` — analytic error models for SCT (low-rank **bias** ∝ `(1−η)`, Eckart–Young) and TurboQuant (unbiased **variance** ∝ `2^(−2b)`), combined into a rate–distortion objective `ΔL ≈ α(1−η)+β·2^(−2b)` whose budget-constrained optimum is "equal marginal loss per byte". Includes a tiny linear-attention + linear-MLP Gaussian toy to validate the models, an analysis roadmap, and grouped references. Code (`theory/toy/`, `theory/models/`) is the next step.
+- `theory/THEORETICAL_ANALYSIS.md` — analytic error models for SCT (low-rank **bias** ∝ `(1−η)`, Eckart–Young) and TurboQuant (unbiased **variance** ∝ `2^(−2b)`), combined into a rate–distortion objective `ΔL ≈ α(1−η)+β·2^(−2b)` whose budget-constrained optimum is "equal marginal loss per byte". Includes a tiny linear-attention + linear-MLP Gaussian toy to validate the models, an analysis roadmap, and grouped references.
+- **Implemented & validated** (`theory/toy/`, `theory/models/`, see `theory/README.md`). One command — `conda activate ml_lab && python theory/run_experiments.py` (~1 min) — runs all Part B arms + the Part A solver and writes `theory/RESULTS.md`. Headline findings:
+  - **A.1 (locally-quadratic loss) confirmed as an *equality*** — the toy loss is exactly quadratic in each weight matrix, so cross-term ~1e-4, known-H readout check to 7e-8, Eckart–Young control exact. Refinement: ΔL is *concave* in `(1−η)`, so α is a local slope.
+  - **A.2 (TurboQuant unbiased variance) confirmed** (bias²/var ~1e-5), but the effective exponent is **p≈1.83, not the asymptotic 2** (finite-rate Lloyd–Max) — the solver now uses the measured `p`.
+  - **A.3 additivity is regime-dependent**: additive in the operating region (median cross 5%) but **sub-additive coupling up to 46%** at aggressive joint compression — compressing weights first makes the KV cache cheaper to quantize (answers Part E q1).
+  - **Recovery-LoRA shrinks α 5.4×**; the solver then compresses weights harder (η\* 0.71→0.64) and reallocates bytes to KV. Measured: α=7.83e-4, β=3.59e-3, α_LoRA=1.46e-4.
 
 ## Experiments
 

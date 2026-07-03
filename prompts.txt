@@ -97,3 +97,15 @@ with the suggestion + references, then continue."
    experiment (Part B), step-by-step roadmap (Part C), grouped references (Part D),
    and open questions (Part E). No code yet; next action = scaffold theory/toy/ +
    theory/models/.
+
+────────────────────────────────────────────────────────────────────────
+[2026-07-03] USER PROMPT
+"lets impliment the deliverable of part A, and B, you can use the conda
+ ml_lab environment and run these experiments locally, log all the steps,
+ findings and make it descriptive for easy analysis and maximum utility of
+ the runs."
+
+Scope: implement theory/models/ (Part A rate-distortion solver + optimum
+surface) and theory/toy/ (Part B linear-attention toy + steps 2-5:
+SCT alpha, TurboQuant beta, additivity/cross-term, recovery-LoRA). Run
+locally in conda env ml_lab (py3.11, torch2.5.1, cuda). Log everything.

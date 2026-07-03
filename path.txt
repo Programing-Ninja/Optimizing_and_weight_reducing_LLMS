@@ -261,3 +261,55 @@ NEXT ACTIONS (future turns, not done yet):
   - scaffold theory/toy/  : gaussian_data.py, linear_attn_model.py, sweep.py
   - scaffold theory/models/: rate_distortion.py (alpha(1-eta)+beta*2^-2b solver+plot)
   - run steps 1-4 locally; record alpha,beta + additivity verdict in iteration.txt.
+
+════════════════════════════════════════════════════════════════════════
+[2026-07-03] PLAN — Implement Part A (theory/models/) + Part B (theory/toy/)
+════════════════════════════════════════════════════════════════════════
+
+GOAL
+  Turn the THEORETICAL_ANALYSIS.md deliverables into runnable code, execute
+  locally in conda env `ml_lab`, and produce descriptive logs + result
+  artifacts (JSON metrics, markdown summaries, PNG figures).
+
+DESIGN DECISIONS (and why)
+  * Toy testbed = unified LINEAR-ATTENTION + LINEAR readout on Gaussian tokens.
+    - Q=XWq, K=XWk, V=XWv ; unnormalized linear attention C = (Q K^T) V ;
+      O = C Wo ; loss = MSE(O, teacher).
+    - KEY PROPERTY we exploit: L is EXACTLY QUADRATIC in each weight matrix
+      when the others are held fixed (biconvex). So SCT-truncating one matrix
+      gives dL = 1/2 tr(dW^T H dW) as an EQUALITY, with H = 2*E[Z^T Z] where Z
+      is that matrix's effective input (Gram/curvature). H estimated by MC on
+      a large eval set = the "known H" the doc promises.
+    - d_head = 64 (has TurboQuant codebooks for bits 1-4; also >=2048 rule is
+      about real models, toy only needs the rotation marginal to be Beta-like).
+  * TurboQuant keys -> TurboQuantProd (needs bits>=2), sweep b in {2,3,4,5}.
+    Values / reconstruction law -> TurboQuantMSE, sweep b in {1,2,3,4}.
+  * alpha = slope of downstream dL vs (1-eta); beta = slope of downstream dL
+    vs 2^(-2b). Report R^2 for each fit (honesty about the approximation).
+  * Additivity test: fit dL(eta,b)=alpha(1-eta)+beta 2^(-2b)+kappa*cross;
+    report kappa magnitude -> additive vs coupled verdict (Part E q1).
+
+FILES
+  theory/toy/
+    gaussian_data.py     Gaussian token gen (iso + anisotropic Sigma_x), teacher
+    linear_attn_model.py unified model; population loss (MC); per-matrix curvature
+    sct_arm.py           step2: SCT energy sweep -> Eckart-Young law, alpha, fig
+    tq_arm.py            step3: TurboQuant bit sweep -> unbiasedness, 2^-2b, beta
+    combined_arm.py      step4: (eta,b) grid -> additivity, cross-term, optimum
+    lora_arm.py          step5: recovery-LoRA -> alpha-shrink, optimum shift
+    run_all.py           orchestrate; write measured (alpha,beta,gamma,delta).json
+    results/             logs, *.json, *.png, RESULTS.md
+  theory/models/
+    __init__.py
+    rate_distortion.py   Part A: dL(eta,b) surface + budget-constrained optimum
+                         via KKT "equal marginal loss per byte"; crossover budget
+    run_solver.py        load measured (alpha,beta,gamma,delta) -> predict+plot
+    results/             surface.png, pareto.png, optimum.json, RESULTS.md
+
+RUN ORDER
+  1. sct_arm.py    -> alpha (+ verify Eckart-Young equality)
+  2. tq_arm.py     -> beta  (+ verify unbiased 2^-2b)
+  3. combined_arm.py -> cross-term kappa, empirical joint optimum
+  4. lora_arm.py   -> alpha_LoRA
+  5. run_solver.py -> predicted optimum surface using measured constants
+  6. Log to iteration.txt; update READMEs.
