@@ -4,11 +4,17 @@ Part B, step 4 — Combined arm (the additivity test).
 Apply SCT (weight truncation at energy η) AND TurboQuant (KV quantization at b
 bits) at once over an (η, b) grid, and test the central A.3 claim:
 
-    ΔL(η, b)  ≈  α·(1−η)  +  β·2^(−2b)          (bias + variance, ADDITIVE)
+    ΔL(η, b)  ≈  ΔL_sct(η)  +  ΔL_tq(b)          (bias + variance, ADDITIVE)
 
-We measure ΔL on the grid, form the additive prediction from the *single-method*
-marginals (SCT-only column ΔL_sct(η), TQ-only row ΔL_tq(b)), and quantify the
-CROSS TERM  κ = measured − (ΔL_sct + ΔL_tq). If |κ| ≪ ΔL, weight compression and
+IMPORTANT: the additive baseline uses the MEASURED single-method marginals —
+ΔL_sct(η) is the toy loss with SCT-only, ΔL_tq(b) the loss with TQ-only — NOT the
+α(1−η) / β·2^(−2b) parametric fits. This is deliberate: testing against measured
+marginals isolates the *interaction* (are the two methods additive?) from the
+question of whether either method's 1-D model is correct. So this arm is
+unaffected by the SCT-curve / p≈1.83 corrections — it never used them.
+
+We measure ΔL on the grid and quantify the CROSS TERM
+κ = measured − (ΔL_sct + ΔL_tq). If |κ| ≪ ΔL, weight compression and
 KV quantization are independent to first order and the joint optimum can be
 predicted from the two cheap single-method sweeps. If κ is large, the methods
 COUPLE and the optimum can't be found by tuning each alone — that itself is the
@@ -166,8 +172,8 @@ def _plot(result):
     ax.scatter(A.ravel(), M.ravel(), s=30)
     lim = np.nanmax([A.max(), M.max()])
     ax.plot([0, lim], [0, lim], "k--", label="additive = measured")
-    ax.set_xlabel("additive prediction α(1−η)+β2^(−2b)")
-    ax.set_ylabel("measured ΔL"); ax.set_title("additivity of bias+variance")
+    ax.set_xlabel("additive baseline: measured (SCT-only + TQ-only)")
+    ax.set_ylabel("measured ΔL (combined)"); ax.set_title("additivity of bias+variance")
     ax.legend(fontsize=8)
     # cross-term heatmap
     ax = axes[1]
