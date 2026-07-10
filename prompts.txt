@@ -127,3 +127,16 @@ this again
 "how long would the shrink eval subset take?"
 "what is the slowest part of the pipeline?"
 "can we run some subset with eta 35 minutes"
+
+--- 2026-07-10 (user) ---
+"check the progress on the run"
+-> Reported: the 35-min 9-point 8B subset validation (results_llama8b/) had
+   already finished (30.3 min wall), no process still running. Summarized
+   Pareto frontier + the E0.85 real-shrinkage / no-LoRA ppl-floor finding.
+
+--- 2026-07-10 (user) ---
+"yes, commit and push results_llama8b then run the full run"
+-> Committing results_llama8b/, pushing, then launching `./run.sh full --gpus 1`
+   (the 55-point 8B grid: 6 energies x 5 KV configs x lora{off,on}) in the
+   background on GPU 1 (GPU 0 occupied by another user's job). Projected
+   ~16-20h per the thread-pool-fix measurement logged above.
