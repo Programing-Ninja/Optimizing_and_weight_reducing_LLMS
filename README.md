@@ -72,6 +72,69 @@ Subset sizes, LoRA steps, and utility weights are all CLI flags
 
 ---
 
+### Llama-3.1-70B scale-up + theory validation (1× A100 80GB)
+
+The same pipeline, refactored to run **Llama-3.1-70B** on a single A100 80GB
+(the shared node's GPU 0 is occupied → everything defaults to **GPU 1** via
+`--gpus 1`, which pins `CUDA_VISIBLE_DEVICES` before torch loads).
+
+**How 140GB of bf16 weights run on one 80GB GPU** (`pipeline/big_model.py`):
+
+1. Load on **CPU** (`low_cpu_mem_usage` — needs ~150GB of host RAM).
+2. Apply SCT while the model sits on CPU, with each layer's SVD computed **on
+   the GPU** (`pipeline/sct_apply.py`, `--svd auto`). Full SVDs of 240 matrices
+   of 8192×28672 would take days, so 70B-class layers use an **adaptive
+   randomized SVD** (`torch.svd_lowrank`, sketch size doubled until the energy
+   target is met; the energy denominator is the exact ‖W‖²_F). Verified against
+   the full SVD: identical rank + retained energy on test spectra.
+3. `dispatch_big()` — accelerate `infer_auto_device_map` + `dispatch_model`
+   with `--max-gpu-mem 72` GiB. Compressed points usually fit wholly on-GPU;
+   the **dense baseline stays partially CPU-offloaded** (PCIe-bound, slow, but
+   bit-correct — expect it to dominate wall time).
+4. Recovery-LoRA trains in place on the dispatched model (no `.to(cuda)`),
+   batch 1 + gradient checkpointing (`--lora-batch 1 --lora-grad-checkpoint`).
+
+**Run (on the HPC node):**
+```bash
+./run.sh dry70b     # integration smoke on GPU 1 — ALWAYS FIRST
+./run.sh quick70b   # tiny end-to-end (datasets + 1 SCT point + TQ cache)
+./run.sh full70b    # full energy × KV × LoRA grid, 70B-sized eval subsets
+./run.sh theory     # theory-validation stage on the newest sweep results
+# both GPUs free? append: --gpus 0,1
+```
+Outputs land in `results_llama-31-70b/`. (Accept the gated
+`meta-llama/Llama-3.1-70B` license on HuggingFace first — separate from 8B.)
+
+---
+
+### Theory validation at LLM scale
+
+**Files:** `run_theory_validation.py` + `pipeline/theory_validate.py`
+
+The LLM-scale analogue of `theory/run_experiments.py`: consumes any sweep's
+`pareto_results.json` and re-tests each toy claim on the real model, using
+ΔL = ln(ppl/ppl_dense) as the distortion measure:
+
+| # | Toy claim (theory/RESULTS.md) | LLM re-test |
+|---|---|---|
+| 1 | SCT distortion is **concave** in (1−η); α(1−η) rejected | linear vs power-law fit R², exponent p_w |
+| 2 | TQ: ΔL ≈ β_p·2^(−p·b), **p≈1.83** | fit (β_p, p) from the KV-bits arm at dense weights |
+| 3 | Errors **mostly additive**, sub-additive when joint | cross(η,b)/ΔL_joint median/max/sign |
+| 4 | Recovery-LoRA recovers **~84%** of SCT bias, ~constant in η | per-η recovery fraction |
+| 5 | Part A solver: interior (η\*, b\*) per budget | solver re-run on **measured** curves vs best measured point under the same budget |
+
+The solver stage reuses `theory/models/rate_distortion.py` verbatim — only the
+inputs change (measured weight-byte curve, measured KV byte slope, fitted
+β_p/p, measured/post-LoRA distortion curves). Validated end-to-end on synthetic
+sweeps with planted laws: recovers p_w, p, β_p, and the recovery fraction
+exactly, and its predicted optima land on the measured-best grid cell.
+
+Outputs (next to the input JSON): `theory_validation.md` (side-by-side
+LLM-vs-toy tables), `theory_validation.png` (4-panel: SCT shape, TQ exponent,
+additivity scatter, solver-vs-sweep overlay), `theory_validation.json`.
+
+---
+
 ### SCT x TurboQuant Joint Pareto Frontier (SmolLM2-135M, CPU — earlier work)
 
 **File:** `experiments/sct_tq_pareto.py`

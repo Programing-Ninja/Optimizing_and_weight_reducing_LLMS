@@ -132,3 +132,42 @@ sbatch pareto.sbatch
    dataset/training issue (dry passes, quick fails).
 3. OOM on 40GB → lower `--ppl-tokens`, eval subsets, or `--lora-steps`; ensure only
    one run is using the GPU (`nvidia-smi`).
+
+---
+
+## 8. 70B addendum (2× A100 80GB node, GPU 0 occupied)
+
+Extra requirements beyond the 8B setup above:
+
+- **Host RAM:** the 70B path loads the checkpoint on CPU first — request
+  ≥200GB (`--mem=200G`) in your SLURM allocation. Weights are ~140GB bf16.
+- **Scratch:** the 70B checkpoint download is ~140GB — make sure `HF_HOME`
+  points at scratch (step 2) with that much free.
+- **Gated license:** accept https://huggingface.co/meta-llama/Llama-3.1-70B
+  (separate from the 8B license).
+- **GPU pinning:** all `70b` run.sh modes pass `--gpus 1` so torch only sees
+  the free A100. Check `nvidia-smi` first; if GPU 0 has freed up, append
+  `--gpus 0,1` to split the dense model across both cards (no CPU offload →
+  much faster dense-baseline evals).
+
+```bash
+srun --partition=<GPU_PARTITION> --gres=gpu:a100:1 --cpus-per-task=16 \
+     --mem=200G --time=48:00:00 --pty bash
+
+./run.sh dry70b      # integration smoke — model load + SCT + dispatch + TQ cache
+./run.sh quick70b    # tiny end-to-end with datasets
+./run.sh full70b     # the real sweep (days; run under tmux/screen or sbatch)
+./run.sh theory      # fit measured curves + solver validation (CPU, minutes)
+```
+
+Wall-time expectations (validate with dry70b/quick70b before committing):
+- SCT factorization: seconds per layer on the A100 (randomized SVD) — minutes
+  per energy point, not hours.
+- Compressed points (energy ≤0.97): whole model fits on the 80GB card → eval
+  speed comparable to the 8B per-token.
+- Dense baseline + energy 0.99 points: partially CPU-offloaded → PCIe-bound,
+  roughly 10–30× slower per forward. The `full70b` mode already shrinks eval
+  subsets (ppl 1024 tok, hs/mmlu 200, tqa 100) to compensate.
+- Recovery-LoRA on offloaded points is the biggest wall-clock risk: 100 steps
+  × batch 1 × seq 256 with gradient checkpointing. If it's intolerable, run
+  `--lora off` first and add the LoRA arm as a second pass.

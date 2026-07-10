@@ -109,3 +109,6 @@ Scope: implement theory/models/ (Part A rate-distortion solver + optimum
 surface) and theory/toy/ (Part B linear-attention toy + steps 2-5:
 SCT alpha, TurboQuant beta, additivity/cross-term, recovery-LoRA). Run
 locally in conda env ml_lab (py3.11, torch2.5.1, cuda). Log everything.
+
+--- 2026-07-10 (user) ---
+checkout the experiment we ran for theory. Now, we want to do something like that for a 70B llama model. and I will run this on an hpc with 2*80 GB A100 (although the first one is beign used by someone else) Now refractor the code for me such that we can validate the utility of models with SCT, TQ, both, recovery-lora at different parameters and validate our theoritical models result with that

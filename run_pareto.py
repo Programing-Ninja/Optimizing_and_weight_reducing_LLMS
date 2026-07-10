@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-run_pareto.py — SCT x TurboQuant utility-vs-compression Pareto sweep on Llama-3.1-8B.
+run_pareto.py — SCT x TurboQuant utility-vs-compression Pareto sweep
+(Llama-3.1-8B on one A100 40/80GB; Llama-3.1-70B via --big-model + --gpus).
 
 Sweeps:
   - SCT energy E  (weight-side compression; None = dense baseline)
@@ -16,14 +17,24 @@ inference-time object), so a LoRA is trained ONCE per SCT energy and reused acro
 KV configs — there is no meaningful "per-KV-point" LoRA. The off/on toggle is what
 exposes the recovery gain.
 
-Designed for a single A100 40GB. One model lives in memory at a time.
+One model lives in memory at a time.
+
+70B path (--big-model, single A100 80GB while GPU 0 is occupied: --gpus 1):
+  load on CPU -> SCT with the SVD on the GPU -> accelerate dispatch_model with
+  a per-GPU max_memory cap. Compressed points usually fit wholly on the GPU;
+  the dense baseline runs partially CPU-offloaded (slow but correct).
 """
 
 import argparse
 import gc
 import json
 import os
+import sys
 import time
+
+# CUDA_VISIBLE_DEVICES must be pinned BEFORE torch initializes CUDA.
+from pipeline.big_model import pin_gpus_from_argv
+pin_gpus_from_argv()
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -34,25 +45,50 @@ from pipeline.eval_tasks import make_cache_factory, evaluate_all
 from pipeline.utility import aggregate_utility, DEFAULT_WEIGHTS
 from pipeline.compression import model_weight_bytes, compression_ratio
 from pipeline.recovery import train_recovery_lora
+from pipeline.big_model import load_model, dispatch_big, input_device
 from pipeline import pareto
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RESULTS_DIR = os.path.join(HERE, "results_llama8b")
+
+
+def results_dir_for(model_name: str) -> str:
+    tag = model_name.rstrip("/").split("/")[-1].replace(".", "").lower()
+    # keep the historical dir name for the 8B so old results stay in place
+    if tag == "llama-31-8b":
+        return os.path.join(HERE, "results_llama8b")
+    return os.path.join(HERE, f"results_{tag}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_base(model_name, device, dtype):
-    tok = AutoTokenizer.from_pretrained(model_name)
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name, dtype=dtype, attn_implementation="eager")
-    model.to(device)
+def is_big(args) -> bool:
+    if args.big_model == "on":
+        return True
+    if args.big_model == "off":
+        return False
+    return "70b" in args.model.lower()  # auto
+
+
+def build_point_model(args, dtype, energy):
+    """Load the base model and apply SCT at `energy`, handling both paths.
+
+    Small path: load -> .to(cuda) -> SCT on-GPU (unchanged 8B behaviour).
+    Big path:   load on CPU -> SCT with the SVD on the GPU (shrinks the model
+                BEFORE placement) -> dispatch across visible GPUs + CPU.
+
+    Returns (model, tok, sct_stats, device) — `device` is where inputs go.
+    """
+    big = is_big(args)
+    model, tok = load_model(args.model, dtype, big, device=args.device)
+    svd_dev = "cuda:0" if (big and torch.cuda.is_available()) else None
+    sct_stats = apply_sct(model, energy, svd_method=args.svd, svd_device=svd_dev)
+    if big:
+        model, _ = dispatch_big(model, max_gpu_mem_gib=args.max_gpu_mem,
+                                offload_dir=args.offload_dir)
     model.eval()
-    return model, tok
+    return model, tok, sct_stats, input_device(model)
 
 
 @torch.no_grad()
@@ -90,20 +126,19 @@ def dry_run(args, dtype):
     print("=" * 78)
     ok = True
 
-    print(f"[1/6] loading {args.model} (dtype={args.dtype}, device={args.device}) ...")
-    model, tok = load_base(args.model, args.device, dtype)
+    energy = (args.energies[0] if args.energies else 0.95)
+    print(f"[1-2/6] loading {args.model} (dtype={args.dtype}, "
+          f"big={is_big(args)}) + SCT at energy={energy} ...")
+    model, tok, stats, dev = build_point_model(args, dtype, energy)
     nparams = sum(p.numel() for p in model.parameters())
     print(f"      OK: {nparams/1e9:.2f}B params, "
-          f"hidden={model.config.hidden_size}, layers={model.config.num_hidden_layers}")
-
-    energy = (args.energies[0] if args.energies else 0.95)
-    print(f"[2/6] applying SCT at energy={energy} ...")
-    stats = apply_sct(model, energy)
-    print(f"      OK: MLP {stats['mlp_ratio']:.2f}x, mean rank "
+          f"hidden={model.config.hidden_size}, layers={model.config.num_hidden_layers}, "
+          f"inputs->{dev}")
+    print(f"      SCT: MLP {stats['mlp_ratio']:.2f}x, mean rank "
           f"{sum(stats['ranks'])/max(len(stats['ranks']),1):.0f}")
 
     prompt = "The quick brown fox jumps over the lazy dog. In a few words,"
-    ids = tok(prompt, return_tensors="pt")["input_ids"].to(args.device)
+    ids = tok(prompt, return_tensors="pt")["input_ids"].to(dev)
 
     print("[3/6] forward through TurboQuantCache (k=3,v=2) ...")
     try:
@@ -158,6 +193,21 @@ def main():
     p.add_argument("--model", default="meta-llama/Llama-3.1-8B")
     p.add_argument("--device", default="cuda")
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
+    # --- big-model / multi-GPU controls (70B path) ---
+    p.add_argument("--gpus", default=None,
+                   help="comma GPU ids to expose (sets CUDA_VISIBLE_DEVICES before "
+                        "torch import; e.g. --gpus 1 on the shared node)")
+    p.add_argument("--big-model", choices=["auto", "on", "off"], default="auto",
+                   help="CPU-load + SCT-on-GPU-SVD + accelerate dispatch. "
+                        "'auto' turns on when the model name contains '70B'")
+    p.add_argument("--max-gpu-mem", type=float, default=72.0,
+                   help="GiB cap per visible GPU for dispatch (headroom for "
+                        "activations/optimizer; 72 of 80 GiB default)")
+    p.add_argument("--offload-dir", default=None,
+                   help="disk offload dir if even CPU RAM is insufficient")
+    p.add_argument("--svd", choices=["auto", "full", "lowrank"], default="auto",
+                   help="SCT factorization: full SVD or adaptive randomized "
+                        "(auto = randomized for 70B-class layers)")
     p.add_argument("--energies", type=float, nargs="+", default=[0.99, 0.97, 0.95, 0.90, 0.85],
                    help="SCT energies (dense baseline is always added)")
     p.add_argument("--kv-configs", default="none,4x4,3x4,3x2,2x2",
@@ -176,6 +226,10 @@ def main():
     p.add_argument("--lora-rank", type=int, default=16)
     p.add_argument("--lora-lr", type=float, default=1e-4)
     p.add_argument("--lora-samples", type=int, default=1000)
+    p.add_argument("--lora-batch", type=int, default=4,
+                   help="LoRA batch size (use 1-2 on the 70B)")
+    p.add_argument("--lora-grad-checkpoint", action="store_true",
+                   help="gradient checkpointing during recovery-LoRA (70B)")
     # utility weights
     p.add_argument("--weights", default=None,
                    help="comma 'ppl,hellaswag,mmlu,truthfulqa' (default equal 0.25 each)")
@@ -192,7 +246,8 @@ def main():
     if args.dry_run:
         raise SystemExit(dry_run(args, dtype))
 
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    results_dir = results_dir_for(args.model)
+    os.makedirs(results_dir, exist_ok=True)
 
     # --- parse sweep axes ---
     def parse_kv(tok):
@@ -221,9 +276,10 @@ def main():
         args.lora_steps = 10
 
     print("=" * 78)
-    print("  SCT x TurboQuant — Utility vs Compression Pareto (Llama-3.1-8B)")
+    print(f"  SCT x TurboQuant — Utility vs Compression Pareto ({args.model})")
     print("=" * 78)
-    print(f"  model={args.model} device={args.device} dtype={args.dtype}")
+    print(f"  model={args.model} device={args.device} dtype={args.dtype} "
+          f"big={is_big(args)} gpus={os.environ.get('CUDA_VISIBLE_DEVICES', 'all')}")
     print(f"  energies={energies}")
     print(f"  kv_configs={kv_configs}")
     print(f"  lora_modes={lora_modes}  subset_limits={limits}")
@@ -242,15 +298,15 @@ def main():
             tag = ("dense" if energy is None else f"E{energy:g}") + ("+LoRA" if lora_on else "")
             print(f"\n{'─'*78}\n  BUILD: {tag}\n{'─'*78}")
 
-            model, tok = load_base(args.model, args.device, dtype)
-            sct_stats = apply_sct(model, energy)
+            model, tok, sct_stats, dev = build_point_model(args, dtype, energy)
 
             lora_info = None
             if lora_on:
                 model, lora_info = train_recovery_lora(
                     model, tok, rank=args.lora_rank, lr=args.lora_lr,
                     steps=args.lora_steps, max_samples=args.lora_samples,
-                    device=args.device, merge=True)
+                    batch_size=args.lora_batch, device=dev, merge=True,
+                    grad_checkpoint=args.lora_grad_checkpoint)
                 model.eval()
 
             weight_bytes = model_weight_bytes(model)
@@ -262,7 +318,7 @@ def main():
 
                 cache_factory = make_cache_factory(model, key_bits, val_bits)
                 t0 = time.time()
-                raw = evaluate_all(model, tok, cache_factory, args.device, limits)
+                raw = evaluate_all(model, tok, cache_factory, dev, limits)
                 kv_bytes = measure_kv_bytes(model, key_bits, val_bits, args.kv_ref_tokens)
                 total_bytes = weight_bytes + kv_bytes
 
@@ -295,7 +351,7 @@ def main():
         pt["compression_ratio"] = compression_ratio(baseline_bytes, pt["total_bytes"])
 
     # --- save + plot ---
-    results_path = os.path.join(RESULTS_DIR, "pareto_results.json")
+    results_path = os.path.join(results_dir, "pareto_results.json")
     with open(results_path, "w") as f:
         json.dump({
             "config": {"model": args.model, "dtype": args.dtype, "weights": weights,
@@ -308,12 +364,12 @@ def main():
     print(f"\n  Saved -> {results_path}")
 
     front = pareto.pareto_frontier(all_points)
-    pareto.plot_pareto(all_points, os.path.join(RESULTS_DIR, "pareto_utility_vs_compression.png"),
+    pareto.plot_pareto(all_points, os.path.join(results_dir, "pareto_utility_vs_compression.png"),
                        f"Utility vs Compression — {args.model}")
     for lora_flag in set(p["lora"] for p in all_points):
         suffix = "lora" if lora_flag else "nolora"
         pareto.plot_energy_kv_heatmap(
-            all_points, os.path.join(RESULTS_DIR, f"heatmap_energy_kv_{suffix}.png"),
+            all_points, os.path.join(results_dir, f"heatmap_energy_kv_{suffix}.png"),
             f"Utility over SCT energy x KV bits ({'with' if lora_flag else 'no'} recovery-LoRA)",
             lora=lora_flag)
 
@@ -328,7 +384,7 @@ def main():
               f"{pt['raw']['perplexity']:>7.2f} {pt['raw']['hellaswag']:>5.2f} "
               f"{pt['raw']['mmlu']:>5.2f} {pt['raw']['truthfulqa']:>5.2f} {mark:>5s}")
     print(f"\n  Pareto frontier: {len(front)} points (*)  |  wall {time.time()-t_start:.0f}s")
-    print("  Plots + JSON ->", RESULTS_DIR)
+    print("  Plots + JSON ->", results_dir)
 
 
 if __name__ == "__main__":

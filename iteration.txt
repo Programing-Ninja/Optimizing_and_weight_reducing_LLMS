@@ -427,3 +427,56 @@ FILES TOUCHED: sct_arm.py (panel3+model-selection+across-layer), lora_arm.py
 MODEL-SELECTION SUMMARY (for a future writeup):
   SCT distortion  : use MEASURED curve (or exact quadratic). α(1−η) rejected.
   TQ  distortion  : β_p·2^(−p·b) with measured p≈1.83 — GOOD parametric fit.
+
+================================================================================
+2026-07-10 — 70B scale-up refactor + LLM-scale theory validation
+================================================================================
+GOAL: run the SCT x TQ x recovery-LoRA utility sweep on Llama-3.1-70B on ONE
+A100 80GB (GPU 1; GPU 0 occupied by another user), then validate the theory
+track's models (concave SCT distortion, TQ exponent p, additivity, LoRA
+recovery, Part A solver) against the measured 70B curves.
+
+WHAT WAS BUILT
+- pipeline/big_model.py: pin_gpus_from_argv() (CUDA_VISIBLE_DEVICES before
+  torch import), CPU load path, dispatch_big() (accelerate infer_auto_device_map
+  + dispatch_model, per-GPU max_memory cap, optional disk offload).
+- pipeline/sct_apply.py: adaptive randomized SVD (torch.svd_lowrank, sketch
+  doubled until target energy; exact ||W||_F^2 denominator) + svd_device so the
+  SVD runs on GPU while the 70B lives on CPU; dense weights freed layer-by-layer
+  (keeping both copies would blow host RAM); progress heartbeat.
+- run_pareto.py: --gpus/--big-model/--max-gpu-mem/--offload-dir/--svd/
+  --lora-batch/--lora-grad-checkpoint; big path = CPU load -> SCT -> dispatch
+  (SCT first so the compressed model fits on the GPU); results_{model_tag}/.
+- pipeline/recovery.py: offload-aware (no .to(device) on dispatched models,
+  optional gradient checkpointing).
+- pipeline/theory_validate.py + run_theory_validation.py: the LLM-scale
+  analogue of theory/run_experiments.py. dL := ln(ppl/ppl_dense). Fits SCT
+  power law vs linear (concavity check), TQ (beta_p, p), additivity cross
+  terms, per-eta LoRA recovery; rebuilds the Part A solver from MEASURED curves
+  (theory/models/rate_distortion.py reused verbatim via a ByteModel subclass
+  whose KV slope is fitted from measured kv_bytes, intercept folded into
+  weight bytes) and compares predicted (eta*, b*) per budget with the best
+  measured point under the same budget. Writes theory_validation.{md,png,json}.
+- run.sh: dry70b/quick70b/full70b (GPU 1, 72GiB cap, batch-1 grad-ckpt LoRA,
+  smaller eval subsets) + theory mode (offline, no HF token needed).
+
+WHAT WAS TESTED (laptop, ml_lab env — no GPU/transformers here)
+- lowrank vs full SVD on synthetic decaying spectra: identical rank (111) and
+  retained energy (0.9503), forward error matches sqrt(discarded energy). PASS
+- apply_sct on toy gate/up/down blocks with lowrank path + heartbeat. PASS
+- Synthetic pareto_results.json with planted laws (p_w=0.6, p=1.8, beta=2.0,
+  80% LoRA recovery, -10% sub-additive coupling): theory_validate recovered
+  ALL planted constants to machine precision; solver optima landed on the
+  measured-best grid cell at every feasible budget; infeasible budgets (below
+  the measured eta range) correctly reported, LoRA re-solve moved b* up. PASS
+- run_pareto.py imports + full CLI with stubbed HPC deps; results dir mapping
+  (8B keeps results_llama8b, 70B -> results_llama-31-70b); --gpus pinning. PASS
+
+NOT YET TESTED (needs the HPC node)
+- Actual 70B load/dispatch/eval and LoRA-under-offload wall times. dry70b then
+  quick70b are the gates before full70b.
+- KNOWN RISK: dense-baseline + E0.99 points are CPU-offloaded and PCIe-bound;
+  if intolerable, run `--lora off` sweep first, LoRA arm as a second pass.
+- KNOWN APPROXIMATION: b_eff=(key_bits+value_bits)/2 maps the sweep's KxV grid
+  onto the theory's single-b model; the KV bits grid (2-4) gives p from 3-4
+  points — an order check, not a precision estimate.

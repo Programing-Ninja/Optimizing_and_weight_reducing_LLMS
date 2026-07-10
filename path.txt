@@ -313,3 +313,71 @@ RUN ORDER
   4. lora_arm.py   -> alpha_LoRA
   5. run_solver.py -> predicted optimum surface using measured constants
   6. Log to iteration.txt; update READMEs.
+
+
+================================================================================
+=== PLAN: 70B scale-up + theory validation at LLM scale (CLAUDE.md rule 3) ===
+Date: 2026-07-10   Author model: Fable 5
+
+GOAL
+----
+Refactor the Llama-8B Pareto pipeline so the same sweep (SCT x TQ x recovery-LoRA)
+runs on Llama-3.1-70B on ONE A100 80GB (GPU 1; GPU 0 occupied), and add a
+theory-validation stage that fits the measured 70B curves and runs the
+theory/models rate-distortion solver on them — the LLM-scale version of the toy.
+
+WHY THE EXISTING PIPELINE CANNOT RUN 70B AS-IS
+----------------------------------------------
+1. load_base() does model.to(device); 70B bf16 = ~140GB > 80GB. Need CPU load +
+   accelerate dispatch_model with max_memory (GPU ~72GiB, remainder CPU-offloaded
+   through AlignDevicesHook at forward time).
+2. apply_sct() runs FULL fp32 SVD per MLP linear; 70B has 240 matrices of
+   8192x28672 — hours of gesvd. Need adaptive-rank randomized SVD
+   (torch.svd_lowrank, exact ||W||_F^2 energy denominator, sketch q doubling
+   until target energy met), computed on GPU while weights live on CPU.
+3. train_recovery_lora() does peft_model.to(device) — same 140GB problem. Skip
+   the move when model is dispatched (hf_device_map), gradient checkpointing,
+   batch 1-2.
+4. CUDA_VISIBLE_DEVICES must be set BEFORE torch import -> parse --gpus at the
+   very top of run_pareto.py.
+5. RESULTS_DIR hardcoded results_llama8b -> derive from model tag.
+
+DELIVERABLES
+------------
+A. pipeline/big_model.py  — pin_gpus_from_argv(), load-on-CPU path,
+   dispatch_big() (infer_auto_device_map, no-split decoder layers, max_memory),
+   input_device().
+B. pipeline/sct_apply.py  — svd_method {auto,full,lowrank} + svd_device;
+   adaptive-rank randomized SVD; per-layer progress heartbeat.
+C. run_pareto.py          — --gpus / --big-model / --max-gpu-mem / --offload-dir;
+   big path ordering: CPU load -> SCT (SVD on GPU) -> dispatch -> LoRA -> eval
+   (SCT before dispatch shrinks the model so more of it fits on the GPU);
+   results_{model_tag}/ dirs; eval device = embed_tokens' device.
+D. pipeline/recovery.py   — offload-aware (no .to(device) when dispatched,
+   optional grad checkpointing, small batch). 8B behaviour unchanged.
+E. pipeline/theory_validate.py + run_theory_validation.py — consume
+   pareto_results.json and:
+   1. SCT arm: dL(eta) = ln(ppl/ppl_dense) @ KV=fp16,no-LoRA; power-law
+      A(1-eta)^p_w vs linear fit (toy: concave, p_w<1); energy->bytes curve.
+   2. TQ arm: dL(b_eff) @ dense weights, b_eff=(kbits+vbits)/2; fit
+      ln dL = ln beta_p - p ln2 b -> measured (beta_p, p); toy predicted p~1.83.
+   3. Additivity: cross = dL_joint - dL_sct - dL_tq, rel to dL_joint;
+      median/max/sign (toy: sub-additive up to -46%).
+   4. LoRA: recovery fraction 1 - dL_lora/dL_nolora per eta (toy ~84%).
+   5. Solver: ByteModel from MEASURED weight bytes + measured KV byte slope,
+      RateDistortion from measured curves (reuse theory/models/rate_distortion.py
+      verbatim), predict (eta*, b*) per budget fraction, compare with best
+      MEASURED point under the same budget.
+   Outputs: results_{tag}/theory_validation.md + .png.
+F. run.sh — modes dry70b / quick70b / full70b (GPU 1, 70B-sized subsets) +
+   `theory` mode (validation stage on existing results).
+G. Docs: README, HPC_SETUP 70B addendum, iteration.txt.
+
+BUDGET REALISM (validate with dry70b on the node first)
+-------------------------------------------------------
+- Dense-baseline points run partially CPU-offloaded -> slowest of the sweep;
+  full70b uses smaller eval subsets (ppl 1024 tok, hs/mmlu 200, tqa 100).
+- SCT points at energy <=0.95 shrink the MLP enough that the compressed model
+  can fit wholly on the 80GB GPU -> full speed.
+- LoRA on offloaded points is the wall-clock risk -> default 100 steps, batch 1,
+  seq 256, grad checkpointing.

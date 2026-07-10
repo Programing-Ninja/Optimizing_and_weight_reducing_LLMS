@@ -56,11 +56,16 @@ def train_recovery_lora(
     seed: int = 42,
     log_every: int = 50,
     merge: bool = True,
+    grad_checkpoint: bool = False,
 ):
     """Train a recovery-LoRA on `model` (in place). Returns (model, info dict).
 
     If merge=True, the adapter is folded into the base weights and a plain model is
     returned (zero extra storage). If merge=False, the peft-wrapped model is returned.
+
+    Dispatched (accelerate device-mapped) models — the 70B path — are trained in
+    place: no `.to(device)` (that would try to pull 140GB onto one GPU); batches go
+    to `device` (the embedding device) and accelerate's hooks stream the rest.
     """
     from peft import LoraConfig, get_peft_model
 
@@ -70,7 +75,13 @@ def train_recovery_lora(
         target_modules=list(target_modules), bias="none", task_type="CAUSAL_LM",
     )
     peft_model = get_peft_model(model, cfg)
-    peft_model.to(device).train()
+    dispatched = bool(getattr(model, "hf_device_map", None))
+    if not dispatched:
+        peft_model.to(device)
+    if grad_checkpoint:
+        peft_model.enable_input_require_grads()
+        peft_model.gradient_checkpointing_enable()
+    peft_model.train()
 
     input_ids, attn_mask, labels = _prepare_alpaca(tokenizer, max_seq_len, max_samples, seed)
     n = input_ids.shape[0]
