@@ -480,3 +480,50 @@ NOT YET TESTED (needs the HPC node)
 - KNOWN APPROXIMATION: b_eff=(key_bits+value_bits)/2 maps the sweep's KxV grid
   onto the theory's single-b model; the KV bits grid (2-4) gives p from 3-4
   points — an order check, not a precision estimate.
+
+=== 2026-07-10: HPC env prep for 70B run — blocked, fell back to 8B ===
+WHAT WAS DONE (this HPC node, single-GPU-shared: GPU0 100% util/occupied,
+GPU1 free)
+- git submodule update --init --recursive: SCT/ and turboquant/ were empty
+  (unpopulated submodules) — populated at pinned commits 72b91d3 / 7ac9b8d.
+- python3 -m venv .venv (py3.12.3, system python3); pip/wheel upgraded.
+- torch installed via cu128 wheel index (system has cuda-12.8 and cuda-13.0
+  toolkits present, no nvcc on PATH) -> torch 2.11.0+cu128, cuda ok:
+  True/12.8. cu124 wheel from HPC_SETUP.md would also have worked (driver
+  reports CUDA 13.0 max) but cu128 matches the installed toolkit better.
+- pip install -r requirements.txt + pip install -e SCT + pip install -e
+  turboquant: all clean, no conflicts. Verified imports: transformers 5.13.0,
+  accelerate 1.14.0, peft 0.19.1, datasets 5.0.0, SpectralLinear/retract_all,
+  turboquant package. .venv total 7.4GB.
+- cp .env.example .env; chmod 600 — left EMPTY for user to fill HF_TOKEN
+  themselves (user chose "I'll edit .env myself" over pasting the token in
+  chat).
+
+BLOCKER FOUND: disk space does not support the 70B checkpoint
+- `df -h .` -> single filesystem /dev/vda2, 2.8T total, 2.7T used, only
+  66-75GB free (checked before/after installs) — 98% full. No separate
+  /scratch, no NFS/network mount (checked findmnt, /mnt/data and /mnt/cuda
+  are empty plain dirs on the same root fs, not real mounts).
+- 70B bf16 checkpoint is ~140GB per README/HPC_SETUP.md addendum — will not
+  fit regardless of where HF_HOME points, since there is only one filesystem
+  on this node.
+- RAM is fine (210GB total / 192GB available > the README's 200G ask is
+  tight but workable), and GPU 1 is confirmed free (`nvidia-smi`: 0MiB used,
+  0% util) for `--gpus 1` pinning — those two are NOT the blocker, disk is.
+- Raised to user via AskUserQuestion. Decision: FALL BACK TO 8B experiment
+  for now rather than freeing disk or pointing HF_HOME elsewhere (no
+  alternate large mount exists on this node). 70B run stays blocked until
+  more disk is available on this node or a node with a real scratch mount is
+  used.
+
+STATE AFTER THIS SESSION
+- Environment is ready for the Llama-3.1-8B Pareto pipeline (`./run.sh dry`,
+  `./run.sh quick`, `./run.sh full`) as soon as .env has HF_TOKEN and the
+  gated meta-llama/Llama-3.1-8B license is accepted on HF (both are
+  user-side actions, not done here).
+- Since GPU0 is occupied on this shared node, 8B runs should also pass
+  `--gpus 1` explicitly (run.sh's dry/quick/full modes don't default to a
+  --gpus pin the way the 70b modes do) — e.g. `./run.sh dry --gpus 1`.
+- 70B path (SCT/big_model.py, run.sh dry70b/quick70b/full70b) is untouched
+  and code-ready; only the disk constraint blocks running it on this
+  specific node.
