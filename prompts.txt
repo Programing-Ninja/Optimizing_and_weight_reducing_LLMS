@@ -140,3 +140,17 @@ this again
    (the 55-point 8B grid: 6 energies x 5 KV configs x lora{off,on}) in the
    background on GPU 1 (GPU 0 occupied by another user's job). Projected
    ~16-20h per the thread-pool-fix measurement logged above.
+
+--- 2026-07-10 (user) ---
+"you can get the auth token from .env file, add this fact to doc so that
+ you dont ask this again and again. Also yes, run LoRA on full grid pass,
+ give me an estimated eta"
+-> git push had failed (no credential helper); sourced .env's GITHUB_TOKEN
+   in a throwaway subshell to push (never printed the token), saved a
+   reference memory so this isn't re-asked. Confirmed no other run_pareto
+   process was already running (only the one just launched), then started
+   `./run.sh full --gpus 1` (55-point grid, lora=both) in the background on
+   GPU 1. ETA estimate: ~18-22h total (eval ~16-19h per the profiled
+   thread-pool-fix projection + ~1h build/SVD overhead across 11 model
+   builds + ~15-40min LoRA training added for the first time, unmeasured
+   until the first LoRA-on build completes).
