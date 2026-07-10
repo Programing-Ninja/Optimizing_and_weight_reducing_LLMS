@@ -381,3 +381,69 @@ BUDGET REALISM (validate with dry70b on the node first)
   can fit wholly on the 80GB GPU -> full speed.
 - LoRA on offloaded points is the wall-clock risk -> default 100 steps, batch 1,
   seq 256, grad checkpointing.
+
+=== 2026-07-10: incremental checkpointing for run_pareto.py (quick + full run) ===
+PROBLEM: run_pareto.py's main loop only calls json.dump(pareto_results.json)
+ONCE, after every grid point has finished (run_pareto.py:353-363). A full
+sweep is ~55 eval points (11 model builds x 5 KV configs) and can run for
+hours; if it's killed/OOMs/preempted partway, every completed point's data
+is lost even though the work was done.
+
+PLAN (minimal, no new abstractions):
+- Factor the existing "normalize to baseline + utility" + "json.dump" block
+  (lines 345-364) into a small `save_checkpoint(...)` helper that:
+    - computes scores/utility/compression_ratio for whichever points already
+      have a baseline_raw available (baseline is always the first point:
+      energy=None, kv=none, lora=off, since energies=[None,...] and
+      kv_configs defaults to "none,4x4,..." with none first)
+    - writes the same pareto_results.json shape as today, plus a top-level
+      "complete": bool so a partial file is distinguishable from a finished
+      sweep.
+- Call save_checkpoint() once per completed point, right after
+  `all_points.append(point)` inside the kv_configs loop (55 writes for a
+  full 8B sweep — negligible cost vs. multi-minute evals).
+- Call it once more after the full loop with complete=True, then proceed to
+  plotting exactly as today (unchanged).
+- No change to CLI, output file location/shape, or plotting — this is
+  purely "flush more often," matching the user's explicit ask to keep
+  intermediate results even if the run doesn't finish.
+
+=== 2026-07-10: verify quick-run timing claim + diagnose quantized-KV slowness ===
+PLAN:
+1. Verify (don't assume) the "~1000s/quantized point, 44 such points, full
+   defaults are 8-20x bigger subsets" claim against the actual quick-run log
+   and run_pareto.py source before re-asking the user how to proceed.
+2. If confirmed, re-present the original background/shrink/time-box decision
+   with real numbers instead of estimates.
+3. On follow-up ("what's the slowest part?"), read the actual quantization
+   code path (pipeline/tq_cache.py, turboquant/quantizer.py, rotation.py)
+   rather than guessing; if a structural inefficiency is found, quantify it
+   with a real profiling run on the free GPU (GPU 1) before proposing a fix,
+   per the user's explicit "profile first to confirm" choice.
+4. If confirmed and the fix is small/safe (no behavior change, same seeds/
+   math), implement it directly rather than just reporting the finding,
+   since it changes the viable path forward (background multi-day run vs.
+   a same-day run).
+5. Once fixed, satisfy the user's concrete ask ("subset with eta 35 min") by
+   designing a small but informative grid (bracket energies + KV configs,
+   LoRA off to stay in budget) sized to the fix's real measured per-forward
+   cost, and run it in the background with progress check-ins.
+
+=== 2026-07-10: fix — cache TurboQuant rotation/QJL matrices per layer ===
+ROOT CAUSE (confirmed by profiling, not just code-reading): make_cache_factory
+(pipeline/eval_tasks.py) built a fresh TurboQuantCache per forward call, so
+every layer's TurboQuantProd (which does a CPU torch.linalg.qr to build the
+rotation matrix) was reconstructed from scratch on every forward — ~32
+layers x ~190-4000+ forwards per eval point depending on subset size.
+Microbenchmark on this node (32 CPU cores): torch.linalg.qr on a 128x128
+matrix costs 155.7ms at torch's default 32-thread pool vs 0.43ms
+single-threaded (340x thread-pool-overhead penalty, not compute). GPU sat at
+0% utilization / CPU at 2640% during the "slow" quantized points — the
+bottleneck was 100% CPU thread-pool churn, not quantization math, attention,
+or eval subset size.
+FIX: TurboQuantLayer/TurboQuantCache/make_cache_factory now share a
+(seed_offset, device)-keyed quantizer cache across every forward within one
+eval point (built lazily on first real call so per-layer device inference
+under multi-GPU dispatch still works), instead of rebuilding per forward.
+Deterministic given (dim, bits, seed) -> no numerical change; verified
+identical ppl (13.19) before/after on the same config.

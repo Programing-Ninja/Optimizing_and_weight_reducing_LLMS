@@ -115,3 +115,15 @@ checkout the experiment we ran for theory. Now, we want to do something like tha
 
 --- 2026-07-10 (user) ---
 read the readme and prepare environment to run the 70B model experiment
+
+--- 2026-07-10 (user) ---
+in the last run, we did the quick run and you asked how do we want to run the
+full run? [quick mode's quantized-KV points took ~1000s each; full mode's
+defaults (2048 ppl tokens / 400 examples) could push each of the 44
+quantized-KV points into the hours range]. can you verify this and ask me
+this again
+
+--- 2026-07-10 (user, follow-ups during the same investigation) ---
+"how long would the shrink eval subset take?"
+"what is the slowest part of the pipeline?"
+"can we run some subset with eta 35 minutes"

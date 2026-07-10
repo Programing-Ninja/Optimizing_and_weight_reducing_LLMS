@@ -44,6 +44,11 @@ def make_cache_factory(model, key_bits: Optional[int], value_bits: Optional[int]
     n_layers = cfg.num_hidden_layers
     head_dim = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
 
+    # Shared across every cache this factory produces (one eval point = many forwards).
+    # Keyed by (layer seed_offset, device) inside TurboQuantLayer so per-layer device
+    # placement under multi-GPU dispatch is still inferred correctly on first use.
+    quantizer_cache: dict = {}
+
     def factory():
         return TurboQuantCache(
             n_layers=n_layers,
@@ -51,6 +56,7 @@ def make_cache_factory(model, key_bits: Optional[int], value_bits: Optional[int]
             key_bits=key_bits,
             value_bits=value_bits,
             value_group_size=value_group_size,
+            quantizer_cache=quantizer_cache,
         )
 
     return factory

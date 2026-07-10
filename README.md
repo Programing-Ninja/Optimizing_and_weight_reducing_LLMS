@@ -70,6 +70,18 @@ cp .env.example .env          # paste HF_TOKEN (request gated Llama-3.1-8B acces
 Subset sizes, LoRA steps, and utility weights are all CLI flags
 (`python run_pareto.py --help`).
 
+**Performance note (fixed 2026-07-10):** quantized-KV eval points used to take
+~1000s each even at `--quick`'s tiny subsets (256 ppl tokens / 20 examples),
+which projected to multi-day for `./run.sh full`'s defaults. Root cause:
+`make_cache_factory` rebuilt every layer's TurboQuant rotation/QJL matrices
+(a CPU `torch.linalg.qr`) on *every forward call* instead of once — on this
+node's 32-core CPU, torch's default 32-thread pool makes that tiny 128×128 QR
+cost 155.7ms/call vs 0.43ms single-threaded (340×  thread-pool overhead, not
+compute). Quantizers are now built once per layer and reused across an eval
+point's forwards (`pipeline/tq_cache.py`, `pipeline/eval_tasks.py`) — same
+seeds, numerically identical results, but `./run.sh full` now projects to
+~16–20 hours instead of ~4–10 days.
+
 ---
 
 ### Llama-3.1-70B scale-up + theory validation (1× A100 80GB)

@@ -35,6 +35,7 @@ class TurboQuantLayer(DynamicLayer):
         value_bits: int,
         value_group_size: int = 32,
         seed_offset: int = 0,
+        quantizer_cache: Optional[dict] = None,
     ):
         super().__init__()
         self.head_dim = head_dim
@@ -42,19 +43,34 @@ class TurboQuantLayer(DynamicLayer):
         self.value_bits = value_bits
         self.value_group_size = value_group_size
         self.seed_offset = seed_offset
+        # Shared across every TurboQuantCache a given make_cache_factory() produces, keyed
+        # by (seed_offset, device). The rotation/QJL matrices (TurboQuantProd.__init__) are
+        # deterministic given (dim, bits, seed) and carry no per-forward state, but building
+        # them does a CPU torch.linalg.qr — measured at 155ms/call under this node's default
+        # 32-thread pool (vs 0.4ms single-threaded) purely from thread-pool overhead on a
+        # 128x128 matrix. Rebuilding per forward (as before) made this the dominant cost of
+        # every quantized-KV eval point. Reuse eliminates the rebuild entirely.
+        self._quantizer_cache = quantizer_cache
         self._key_quantizer: Optional[TurboQuantProd] = None
         self._q_keys: Optional[ProdQuantized] = None
         self._q_values: Optional[ValueQuantized] = None
         self.compressed_bytes: int = 0
 
     def _get_quantizer(self, device) -> TurboQuantProd:
-        if self._key_quantizer is None:
-            self._key_quantizer = TurboQuantProd(
-                dim=self.head_dim,
-                bits=self.key_bits,
-                device=device,
-                seed=42 + self.seed_offset * 7,
-            )
+        if self._key_quantizer is not None:
+            return self._key_quantizer
+        cache_key = (self.seed_offset, device)
+        if self._quantizer_cache is not None and cache_key in self._quantizer_cache:
+            self._key_quantizer = self._quantizer_cache[cache_key]
+            return self._key_quantizer
+        self._key_quantizer = TurboQuantProd(
+            dim=self.head_dim,
+            bits=self.key_bits,
+            device=device,
+            seed=42 + self.seed_offset * 7,
+        )
+        if self._quantizer_cache is not None:
+            self._quantizer_cache[cache_key] = self._key_quantizer
         return self._key_quantizer
 
     @staticmethod
@@ -120,7 +136,7 @@ class TurboQuantCache(DynamicCache):
     """DynamicCache populated with TurboQuantLayer instances (one per model layer)."""
 
     def __init__(self, n_layers: int, head_dim: int, key_bits: int, value_bits: int,
-                 value_group_size: int = 32):
+                 value_group_size: int = 32, quantizer_cache: Optional[dict] = None):
         super().__init__()
         self._n_layers = n_layers
         self._head_dim = head_dim
@@ -128,7 +144,8 @@ class TurboQuantCache(DynamicCache):
         self._value_bits = value_bits
         self._value_group_size = value_group_size
         self.layers = [
-            TurboQuantLayer(head_dim, key_bits, value_bits, value_group_size, seed_offset=i)
+            TurboQuantLayer(head_dim, key_bits, value_bits, value_group_size, seed_offset=i,
+                            quantizer_cache=quantizer_cache)
             for i in range(n_layers)
         ]
         self.layer_class_to_replicate = None  # disable auto-grow

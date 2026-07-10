@@ -117,6 +117,28 @@ def free(model):
         torch.cuda.empty_cache()
 
 
+def save_checkpoint(results_path, config, baseline_raw, baseline_bytes,
+                     all_points, weights, t_start, complete):
+    """Overwrite pareto_results.json with everything computed so far.
+
+    Called after every grid point (not just at the end) so a killed/OOM'd
+    sweep still leaves usable partial results on disk.
+    """
+    if baseline_raw is not None:
+        for pt in all_points:
+            if "utility" not in pt:
+                agg = aggregate_utility(pt["raw"], baseline_raw, weights)
+                pt["scores"] = agg["scores"]
+                pt["utility"] = agg["utility"]
+                pt["compression_ratio"] = compression_ratio(baseline_bytes, pt["total_bytes"])
+    with open(results_path, "w") as f:
+        json.dump({
+            "config": config, "baseline_raw": baseline_raw, "baseline_bytes": baseline_bytes,
+            "points": all_points, "wall_sec": round(time.time() - t_start, 1),
+            "complete": complete,
+        }, f, indent=2)
+
+
 def dry_run(args, dtype):
     """Smoke test: exercise model load + SCT + TQ-cache forward + KV accounting +
     peft availability, with NO dataset downloads and NO training. Isolates the
@@ -290,6 +312,12 @@ def main():
     baseline_bytes = None
     t_start = time.time()
 
+    results_path = os.path.join(results_dir, "pareto_results.json")
+    config = {"model": args.model, "dtype": args.dtype, "weights": weights,
+              "limits": limits, "kv_ref_tokens": args.kv_ref_tokens,
+              "lora": {"steps": args.lora_steps, "rank": args.lora_rank,
+                       "lr": args.lora_lr, "samples": args.lora_samples}}
+
     for energy in energies:
         for lora_on in lora_modes:
             if energy is None and lora_on:
@@ -340,27 +368,16 @@ def main():
                       f"wt={weight_bytes/1e9:.2f}GB kv={kv_bytes/1e6:.1f}MB | "
                       f"{point['eval_sec']:.0f}s")
 
+                save_checkpoint(results_path, config, baseline_raw, baseline_bytes,
+                                 all_points, weights, t_start, complete=False)
+                print(f"    checkpoint -> {results_path} ({len(all_points)} points)", flush=True)
+
             free(model)
 
-    # --- normalize to baseline + utility ---
+    # --- final save + plot ---
     assert baseline_raw is not None, "baseline (dense, fp16, no-LoRA) was not evaluated"
-    for pt in all_points:
-        agg = aggregate_utility(pt["raw"], baseline_raw, weights)
-        pt["scores"] = agg["scores"]
-        pt["utility"] = agg["utility"]
-        pt["compression_ratio"] = compression_ratio(baseline_bytes, pt["total_bytes"])
-
-    # --- save + plot ---
-    results_path = os.path.join(results_dir, "pareto_results.json")
-    with open(results_path, "w") as f:
-        json.dump({
-            "config": {"model": args.model, "dtype": args.dtype, "weights": weights,
-                       "limits": limits, "kv_ref_tokens": args.kv_ref_tokens,
-                       "lora": {"steps": args.lora_steps, "rank": args.lora_rank,
-                                "lr": args.lora_lr, "samples": args.lora_samples}},
-            "baseline_raw": baseline_raw, "baseline_bytes": baseline_bytes,
-            "points": all_points, "wall_sec": round(time.time() - t_start, 1),
-        }, f, indent=2)
+    save_checkpoint(results_path, config, baseline_raw, baseline_bytes,
+                     all_points, weights, t_start, complete=True)
     print(f"\n  Saved -> {results_path}")
 
     front = pareto.pareto_frontier(all_points)

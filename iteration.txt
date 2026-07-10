@@ -527,3 +527,139 @@ STATE AFTER THIS SESSION
 - 70B path (SCT/big_model.py, run.sh dry70b/quick70b/full70b) is untouched
   and code-ready; only the disk constraint blocks running it on this
   specific node.
+
+=== 2026-07-10: huggingface_hub 1.23.0 breaks load_dataset() on legacy repos ===
+FOUND (during `./run.sh quick --gpus 1`): eval_perplexity's
+load_dataset("wikitext", "wikitext-2-raw-v1", split="test") raised
+HfUriError: "Invalid HF URI 'hf://datasets/wikitext@<rev>/.huggingface.yaml'
+... Repository id must be 'namespace/name', got 'wikitext'."
+ROOT CAUSE: huggingface_hub/utils/_hf_uris.py::_parse_repo_body hard-requires
+exactly one '/' in the repo id. datasets>=4.x fetches a dataset's metadata
+via an hf:// URI before falling back to the loading script, and canonical/
+legacy dataset repos with NO namespace (wikitext, truthful_qa, squad, glue,
+...) don't have a '/' in their id -> the URI parser throws before datasets
+ever gets to try the actual data files. Reproduced identically on
+datasets==5.0.0 AND datasets==3.6.0 (downgrading datasets does NOT help —
+the break is entirely on the huggingface_hub side).
+FIX: pin huggingface_hub==1.5.0 (transformers 5.13.0's own stated floor,
+`huggingface-hub<2.0,>=1.5.0`) instead of letting pip resolve to the latest
+1.23.0. Verified 1.5.0 loads all four benchmark datasets cleanly: wikitext
+(4358 test rows), Rowan/hellaswag (10042), cais/mmlu (14042), truthful_qa
+(817). Pinned in requirements.txt with a comment explaining why.
+
+================================================================================
+2026-07-10 (cont.) — verified quick-run timing, found + fixed a 340x CPU
+thread-pool bug in TurboQuant KV quantization, ran a 35-min subset sweep
+================================================================================
+
+VERIFIED (against logs/pareto_quick_20260710_111432.log + run_pareto.py source):
+  - Quick mode's quantized-KV points (KV=3x2) took 998s and 1072s; fp16-KV
+    points took only 19-23s. The "~1000s/quantized point" claim was real.
+  - Full grid = 6 energies (dense+5) x 5 KV configs x lora{off,on} (dense
+    skips lora) = 55 points, 44 of which use a quantized KV config (matches
+    the "44" figure exactly).
+  - Full defaults (--ppl-tokens 2048, --hellaswag/--mmlu 400, --truthfulqa
+    200) are 8-20x quick's subset sizes (256/20/20/10) -> projected the
+    original "hours per point, multi-day total" claim was accurate, maybe
+    slightly optimistic (~4-10 days for the full 55-point grid).
+  - full70b-style shrunk subsets (1024/200/200/100) projected to roughly
+    half that (~2-5 days) — still multi-day, not a fix by itself.
+
+ROOT-CAUSE FOUND (profiled, not guessed): quantized-KV points were CPU-bound,
+not GPU-bound or eval-subset-bound.
+  - Live profiling on GPU 1 (Llama-3.1-8B, already cached, local_files_only,
+    no HF_TOKEN needed): during a quantized-KV forward, GPU showed 0%
+    utilization while the process pinned ~2640% CPU (26-32 of 32 cores).
+  - Microbenchmark isolated the cause: torch.linalg.qr on a 128x128 matrix
+    (the rotation-matrix construction inside TurboQuantProd.__init__) costs
+    155.7ms/call at torch's default 32-thread intra-op pool on this node,
+    vs 0.43ms/call single-threaded — a 340x THREAD-POOL-OVERHEAD penalty on
+    a matrix so tiny the actual FLOPs are negligible.
+  - make_cache_factory (pipeline/eval_tasks.py) built a fresh TurboQuantCache
+    per forward call (cache = cache_factory() inside eval_perplexity AND
+    inside _continuation_logprob, called once per hellaswag/mmlu/truthfulqa
+    choice). Each fresh cache meant fresh TurboQuantLayer instances for all
+    32 layers, each lazily rebuilding its TurboQuantProd (rotation + QJL
+    matrices) from scratch. ~32 layers x ~190 forwards/point (quick subset
+    sizes) = ~6080 redundant QR decompositions x 155.7ms ~ 947s — accounts
+    for essentially all of the measured 998s/1072s per point.
+
+FIX (pipeline/tq_cache.py, pipeline/eval_tasks.py):
+  - TurboQuantLayer takes an optional quantizer_cache dict, keyed by
+    (seed_offset, device); _get_quantizer() checks/populates it instead of
+    always rebuilding. Lazy (built on first real forward) so per-layer
+    device inference under multi-GPU dispatch (the 70B --big-model path)
+    still works correctly.
+  - TurboQuantCache passes quantizer_cache through to its layers.
+  - make_cache_factory builds ONE shared quantizer_cache dict per eval point
+    (per distinct key_bits/value_bits config) and closes over it, so every
+    forward within that point's evaluate_all() call reuses the same 32
+    per-layer quantizers instead of rebuilding them.
+  - No numerical change: same seeds, same construction params. VERIFIED via
+    a standalone profiling re-run: dense/KV=3x2 ppl=13.19 both before and
+    after the fix (identical to 4 sig figs), confirming behavior-preserving.
+
+MEASURED SPEEDUP (profile_tq.py, 5 hellaswag-style examples + 1 ppl window
+= 21 forwards, same free GPU):
+  - quantizer __init__ calls: 32 (was ~672 for the same 21-forward sample,
+    extrapolating from the pre-fix rate) -> total quantizer-init time 4.9s
+    (was projected ~104s for the same sample pre-fix).
+  - Total wall for 21 forwards: 12.88s post-fix. Pre-fix, the SAME 20-forward
+    sample had not finished after 13+ CPU-minutes (>780s) when killed —
+    at minimum a ~60x speedup on this slice, likely much more.
+  - Updated full-grid projection: full defaults now project to roughly
+    20-25 min/quantized point (was 2.2-5.5 hr), ~16-20 hours for the full
+    55-point grid (was ~4-10 days) — turns a multi-day background risk into
+    a comfortable overnight run.
+
+SUBSET VALIDATION RUN (results_llama8b/, this session):
+  Command: python -u run_pareto.py --gpus 1 --energies 0.95 0.85
+    --kv-configs none,4x4,2x2 --lora off --ppl-tokens 512 --hellaswag 50
+    --mmlu 50 --truthfulqa 25
+  Grid: {dense, E0.95, E0.85} x {fp16, KV=4x4, KV=2x2}, LoRA off, 9 points.
+  Wall time: 1818s (30.3 min) — matched the ~30-35 min budget the fix made
+  possible; the SAME grid pre-fix would have taken on the order of hours.
+
+  Results (U = utility normalized to dense/fp16, front = Pareto-optimal):
+    dense / KV=fp16    U=1.000 ratio=1.00 ppl=5.55      hs=.82 mmlu=.68 tqa=.54  *
+    dense / KV=4x4     U=0.911 ratio=1.01 ppl=5.82      hs=.76 mmlu=.56 tqa=.51  *
+    E0.95 / KV=fp16    U=0.434 ratio=0.97 ppl=1781.91    hs=.32 mmlu=.26 tqa=.52
+    E0.85 / KV=fp16    U=0.432 ratio=1.17 ppl=207632.56  hs=.28 mmlu=.26 tqa=.54  *
+    E0.85 / KV=4x4     U=0.421 ratio=1.18 ppl=174290.68  hs=.26 mmlu=.26 tqa=.53  *
+    E0.95 / KV=4x4     U=0.402 ratio=0.98 ppl=3761.16    hs=.34 mmlu=.22 tqa=.47
+    dense / KV=2x2     U=0.399 ratio=1.01 ppl=175.31     hs=.36 mmlu=.24 tqa=.42
+    E0.85 / KV=2x2     U=0.370 ratio=1.18 ppl=141866.67  hs=.24 mmlu=.16 tqa=.51  *
+    E0.95 / KV=2x2     U=0.352 ratio=0.98 ppl=74581.11   hs=.24 mmlu=.18 tqa=.46
+
+  Pareto frontier: 5 of 9 points (dense/fp16, dense/4x4, E0.85/fp16,
+  E0.85/4x4, E0.85/2x2).
+
+  COUNTERINTUITIVE / notable (rule 6):
+  - E0.85 achieves REAL weight compression this time (MLP params 5.637B ->
+    4.450B, 1.27x smaller, mean rank 2515) unlike E0.95 (5.637B -> 5.861B,
+    0.96x — still BIGGER, consistent with every prior 8B/70B run this
+    project has logged). This is the first 8B point in this project where
+    SCT actually shrinks the model.
+  - Despite that, E0.85's post-hoc ppl (no LoRA) is catastrophic
+    (141867-207633) — WORSE in absolute ppl than E0.95's (1782-74581) even
+    though E0.85 discards more energy. Post-hoc, un-finetuned SCT truncation
+    destroys quality faster than it saves bytes; the byte savings only pay
+    off with recovery-LoRA (this run used --lora off deliberately to fit the
+    35-min budget, so it is NOT evidence against recovery-LoRA — it is the
+    expected "no finetune" baseline the full study's LoRA toggle is meant to
+    beat).
+  - KV=2x2 alone (dense weights, no SCT) already costs a lot: ppl 5.55->175,
+    hs 0.82->0.36 — 2-bit keys are far more destructive than 4-bit, matching
+    the CLAUDE.md README note about 2-bit value quantization quality cost.
+
+NOT DONE / NEXT:
+  - This subset run used --lora off; the fix makes LoRA-on points and the
+    full 55-point grid tractable in the ~16-20hr range projected above —
+    still needs an actual full/quick70b-style pass to confirm the fixed
+    pipeline's timing holds at full subset sizes (this session only
+    validated at a medium subset: 512/50/50/25).
+  - Consider whether tq_cache.py's quantizer cache should also be exposed to
+    measure_kv_bytes' separate cache_factory call in run_pareto.py (currently
+    a distinct call = a distinct cache, correctly rebuilt once, not a perf
+    concern since it's a single reference-length pass, but noting for
+    completeness).
