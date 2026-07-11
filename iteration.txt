@@ -663,3 +663,55 @@ NOT DONE / NEXT:
     a distinct call = a distinct cache, correctly rebuilt once, not a perf
     concern since it's a single reference-length pass, but noting for
     completeness).
+
+=== 2026-07-11/12: full 55-point 8B Pareto grid (LoRA off+on) — RESULT ===
+RUN: `./run.sh full --gpus 1` (launched 2026-07-10, checked complete
+2026-07-12). Grid: {dense, E0.99, E0.97, E0.95, E0.90, E0.85} x {fp16, 4x4,
+3x4, 3x2, 2x2} x {LoRA off, on}, 55 points, wall_sec=25728 (7.15h) --
+well under the ~16-20h projection from the thread-pool fix (projection was
+conservative; actual per-point eval_sec ranged ~180-230s, LoRA training
+added modestly, no point spiked).
+
+WHAT WORKED:
+- Thread-pool fix (prior commit) held at full scale: no point showed the
+  old 1000s+ CPU-bound behavior.
+- Per-point checkpointing survived the full run with `complete: true` and
+  all 55/55 points present -- no restart needed.
+- Recovery-LoRA does exactly what it was designed to do: at E0.85 (first
+  energy with real weight shrinkage, ratio~1.17-1.18x smaller than dense),
+  LoRA drops ppl from the untrained-truncation floor (84k-109k, matching
+  the LoRA-off subset run logged 2026-07-10) down to 51.85-70.26. This
+  confirms the prediction made in that earlier entry.
+
+WHAT DIDN'T:
+- LoRA recovery does not close the gap to dense at any energy where SCT
+  actually compresses. Best real-compression (ratio>1) point across all 55
+  is E0.9+LoRA/KV=fp16: U=0.591, ratio=1.075, ppl=27.68 vs dense's 5.47 --
+  i.e. spending LoRA-recovery training still leaves ~41% utility on the
+  table for a 7.5% byte reduction.
+- The full Pareto frontier (12/55 points, see README) is dominated at the
+  high-utility end entirely by KV-only compression (dense + 4x4/3x4/3x2 KV
+  bits, weights untouched) -- SCT's own compression never appears on the
+  frontier above ratio=1.08. 4-bit KV quantization alone gets U=0.927 for
+  free (ratio~1.006, since weights >> KV in total bytes); SCT's best
+  real-shrinkage tradeoff (E0.85+LoRA/fp16) is U=0.488 for ratio=1.172 --
+  strictly worse marginal utility-per-byte than the KV-only points.
+
+COUNTERINTUITIVE (rule 6): across the entire 55-point grid, SCT weight
+compression is never the right lever at 8B scale -- even with LoRA, its
+best utility-per-byte-saved is worse than free 4-bit KV quantization. This
+contradicts the project's original framing (SCT compresses best at
+hidden>=2048, i.e. 8B should be a good regime) -- the theory track's
+predicted rate-distortion advantage for SCT doesn't show up empirically
+yet at this scale/energy range/LoRA budget. Open question for NEXT: is this
+a LoRA training-budget artifact (peft steps/alpaca slice too small to fully
+recover), or a genuine scale mismatch between the theory's assumptions and
+an 8B post-hoc-SVD-then-finetune pipeline? Worth checking LoRA step count
+vs points where utility plateaus before extending the grid further.
+
+NOT DONE / NEXT:
+- No further runs launched this session -- documented results, updated
+  README Results subsection, committing results_llama8b/ + docs.
+- Consider a longer-LoRA-budget ablation at E0.85/E0.9 only (2-3 points,
+  cheap) to test whether the gap closes with more recovery steps before
+  concluding SCT doesn't pay off at 8B.

@@ -82,6 +82,44 @@ point's forwards (`pipeline/tq_cache.py`, `pipeline/eval_tasks.py`) — same
 seeds, numerically identical results, but `./run.sh full` now projects to
 ~16–20 hours instead of ~4–10 days.
 
+#### Results — full 55-point grid (2026-07-11, 1×A100, GPU 1)
+
+`{dense, E0.99, E0.97, E0.95, E0.90, E0.85} × {fp16, 4×4, 3×4, 3×2, 2×2} ×
+{LoRA off, on}`, wall time **25728s (7.15h)** — well under the ~16–20h
+projection. Results in `results_llama8b/pareto_results.json`; plots in
+`pareto_utility_vs_compression.png` and `heatmap_energy_kv_{nolora,lora}.png`.
+
+Pareto frontier (12 of 55 points, utility `U` vs. `compression_ratio` =
+baseline_bytes / this_bytes, so `>1` means genuinely smaller than dense):
+
+| Config | LoRA | U | ratio | ppl |
+|---|---|---|---|---|
+| dense / KV=fp16 | – | 1.000 | 1.000 | 5.47 |
+| dense / KV=4×4 | – | 0.927 | 1.006 | 6.26 |
+| dense / KV=3×4 | – | 0.748 | 1.006 | 10.19 |
+| dense / KV=3×2 | – | 0.704 | 1.007 | 12.72 |
+| E0.9 / KV=fp16 | on | 0.591 | 1.075 | 27.68 |
+| E0.9 / KV=4×4 | on | 0.558 | 1.082 | 35.35 |
+| E0.85 / KV=fp16 | on | 0.488 | 1.172 | 51.85 |
+| E0.85 / KV=fp16 | off | 0.466 | 1.172 | 105233 |
+| E0.85 / KV=4×4 | on | 0.465 | 1.180 | 70.26 |
+| E0.85 / KV=4×4 | off | 0.462 | 1.180 | 84424 |
+| E0.85 / KV=3×4 | off | 0.459 | 1.180 | 109255 |
+| E0.85 / KV=2×2 | off | 0.455 | 1.181 | 54044 |
+
+**Recovery-LoRA works as designed but doesn't close the gap.** At E0.85 (the
+lowest energy tested, where SCT first shrinks the model ~1.18–1.2×), LoRA
+drops perplexity from the catastrophic untrained-truncation floor
+(84k–109k) to 51.85–70.26 — confirming the prediction logged after the
+LoRA-off subset run. But **no point with real weight compression
+(`ratio > 1`) reaches even 60% of dense utility** — best is E0.9+LoRA/fp16
+at U=0.591, ratio=1.075. The only "free" win on this pipeline is 4-bit KV
+quantization alone (dense/KV=4×4, U=0.927 for ~0.6% extra bytes saved from
+KV, since weights dominate total size). SCT's weight compression, even with
+LoRA recovery, is not yet a good trade at 8B scale — the byte savings (7–18%)
+cost far more utility (25–41%) than 4-bit KV quantization costs for its
+savings.
+
 ---
 
 ### Llama-3.1-70B scale-up + theory validation (1× A100 80GB)

@@ -154,3 +154,16 @@ this again
    thread-pool-fix projection + ~1h build/SVD overhead across 11 model
    builds + ~15-40min LoRA training added for the first time, unmeasured
    until the first LoRA-on build completes).
+
+--- 2026-07-12 (user) ---
+"check on the last run"
+-> Reported: the full 55-point 8B grid (launched 2026-07-10) had completed
+   (wall_sec=25728, 7.15h, well under 16-22h estimate). Summarized Pareto
+   frontier, LoRA recovery confirmation, and the finding that no
+   real-compression point (ratio>1) beats ~59% utility.
+
+--- 2026-07-12 (user) ---
+"yes, go ahead"
+-> Documented full-grid results in README.md (Results subsection) and
+   iteration.txt, then committed and pushed results_llama8b/ + docs per
+   workspace rule 1.
