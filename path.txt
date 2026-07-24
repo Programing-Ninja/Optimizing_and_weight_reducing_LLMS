@@ -515,6 +515,65 @@ PLAN:
    ablation-merge finding, update README's Results subsection, commit+push
    (workspace rule 1) results_llama8b/ + path.txt + iteration.txt + README.
 
+SUPERSEDED (see next entry): user asked, before this run got far, to stop
+it and do one comprehensive run instead with a clean/consistent energy grid
+and LoRA budget throughout. Killed pid 1670276 ~6 min in (still SCT-
+factoring E0.8, zero points computed/checkpointed yet -- nothing wasted).
+
+=== 2026-07-24 (cont'd): comprehensive final 8B grid, consistent 1600-step LoRA ===
+GOAL: replace the ad-hoc, mixed-LoRA-budget grid (55 original points at
+steps=200 + 2 ablation points + abandoned 0.8/0.75 attempt at steps=1600)
+with ONE consistently-budgeted run, using the ablation's finding (steps=
+1600 closes much of the recovery gap) uniformly, then produce the final
+8B Pareto plot.
+
+GRID: energies {1.0, 0.97, 0.94, 0.90, 0.85, 0.80} (dense/None is always
+auto-prepended by run_pareto.py -> 7 energy levels incl. true dense) x
+KV {fp16, 4x4, 3x4, 3x2} (2x2 dropped this round -- it was never on the
+frontier in the old grid) x LoRA {off, on}, LoRA-on always at steps=1600 /
+samples=8000 (the ablation's budget, not the old default 200/1000).
+energy=1.0 is a genuine new SCT point (not the same as dense/None) --
+SpectralLinear at full retained energy still stores U/s/V factors at
+rank=min(m,n), which is *larger* than the dense weight (matches the
+project's standing finding that SCT only shrinks the model once energy is
+low enough for real rank truncation) -- it's the top-of-sweep control
+showing the SCT-wrapper-only cost with zero truncation.
+
+Builds: 1 dense (lora off, 4 kv evals) + 6 energies x 2 lora modes (12
+builds) = 13 builds x 4 kv-configs = 52 points total.
+
+COMMAND:
+  python -u run_pareto.py --energies 1.0 0.97 0.94 0.90 0.85 0.80 \
+    --kv-configs none,4x4,3x4,3x2 --lora both \
+    --lora-steps 1600 --lora-samples 8000 --gpus 1
+
+ETA (basis: measured 55-grid timing -- build overhead ~410s/build, LoRA
+train at steps=1600 ~600-650s per training matching the ablation's
+measured 594s/646s, eval ~350-450s per kv-config):
+  13 builds x 410s              ~= 5330s
+  6 LoRA trainings x 625s        ~= 3750s
+  13 builds x 4 kv x 400s        ~= 20800s
+  TOTAL                          ~= 29880s ~= 8.3h baseline
+Both GPUs were at 98% utilization from other users' jobs at launch time
+(shared HPC node) -- realistic range 8-12h+ depending on contention.
+Per-point checkpointing (existing run_pareto.py behavior) means a
+kill/OOM/preemption leaves a usable partial grid, same safety net as the
+full-55 run.
+
+DATA HANDLING: this becomes the new canonical results_llama8b/
+pareto_results.json (fresh run, own dense baseline at steps=n/a). The old
+57-point mixed-budget grid (committed at c8604bc) is archived to
+results_llama8b/pareto_results_legacy_mixed_budget.json for reference
+before the new run overwrites the live file, rather than merged --
+different energy set (0.99/0.95 dropped, 0.94/1.0/0.80 added) and mixed
+LoRA budgets make merging misleading for a "final" plot; git history keeps
+the old data recoverable regardless.
+
+NEXT: once the 52-point run finishes, regenerate pareto_utility_vs_
+compression.png + both heatmaps + the printed table from this run alone,
+update iteration.txt + README's Results section (superseding the old
+55/57-point summary), commit+push.
+
 === 2026-07-12: LoRA-budget ablation at E0.85/E0.9 ===
 GOAL: test whether the utility gap left after recovery-LoRA (best real-
 compression point in the full grid was E0.9+LoRA/fp16 at U=0.591, ratio=
