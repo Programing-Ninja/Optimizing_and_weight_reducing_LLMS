@@ -120,6 +120,26 @@ LoRA recovery, is not yet a good trade at 8B scale — the byte savings (7–18%
 cost far more utility (25–41%) than 4-bit KV quantization costs for its
 savings.
 
+**Follow-up (2026-07-24): LoRA-budget ablation — the gap was partly a
+training-budget artifact.** Re-running E0.85/E0.9 + LoRA at **steps=1600**
+(8× the grid's default 200, samples scaled 5× to 8000) substantially closes
+the recovery gap at the *same* compression ratio:
+
+| Config | steps | U | ratio | ppl |
+|---|---|---|---|---|
+| E0.9+LoRA / KV=fp16 | 200 | 0.591 | 1.075 | 27.68 |
+| E0.9+LoRA / KV=fp16 | 1600 | **0.700** | 1.075 | 16.08 |
+| E0.85+LoRA / KV=fp16 | 200 | 0.488 | 1.172 | 51.85 |
+| E0.85+LoRA / KV=fp16 | 1600 | **0.603** | 1.172 | 25.65 |
+
+Both steps=1600 points now sit on the Pareto frontier (57-point grid, 10 on
+the frontier). Still short of dense (ppl 5.47) and still not better than
+free 4-bit KV quantization's utility-per-byte, but the "SCT doesn't pay off
+at 8B" conclusion above should be read as *at the grid's default LoRA
+budget* — more recovery training buys real utility at zero extra byte cost.
+Grid extended to E=0.80/0.75 (steps=1600) is in progress; see
+`results_llama8b/pareto_results.json` for the latest point count.
+
 ---
 
 ### Llama-3.1-70B scale-up + theory validation (1× A100 80GB)

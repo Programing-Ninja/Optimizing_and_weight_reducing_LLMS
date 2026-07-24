@@ -447,3 +447,119 @@ eval point (built lazily on first real call so per-layer device inference
 under multi-GPU dispatch still works), instead of rebuilding per forward.
 Deterministic given (dim, bits, seed) -> no numerical change; verified
 identical ppl (13.19) before/after on the same config.
+
+=== 2026-07-24: resolve stray 1600-step ablation + extend grid to E=0.8/0.75 ===
+CONTEXT: found the working tree with results_llama8b/pareto_results.json
+overwritten by an in-progress LoRA-budget ablation (the "NEXT" item logged
+2026-07-12: does more LoRA budget close the SCT recovery gap?) that ran
+E0.85/E0.9 +LoRA at steps=1600 (vs the grid's steps=200) with --kv-configs
+none only, and never got merged back into the full 55-point grid per its
+own plan. Backed the 5-point ablation json up to the scratchpad, git-
+restored the committed 55-point grid + plots (nothing lost, ablation run
+already completed real GPU compute -- confirmed with user this is worth
+keeping, not discarding).
+
+ABLATION FINDING (worth preserving): steps=1600 substantially closes the
+recovery gap vs the grid's default steps=200 --
+  E0.9+LoRA/fp16:  ppl 27.68->16.08, hs 0.632->0.672, mmlu 0.310->0.443
+  E0.85+LoRA/fp16: ppl 51.85->25.65, hs 0.497->0.620, mmlu 0.242->0.352
+-- i.e. the 2026-07-12 "is this a LoRA-budget artifact?" question is
+answered: partially yes, more budget helps a lot, though still well short
+of dense (ppl 5.47).
+
+PLAN:
+1. Merge the 2 ablation points into the restored 55-grid as new, distinctly
+   labeled entries -- "E0.85+LoRA(steps=1600) / KV=fp16" and "E0.9+LoRA
+   (steps=1600) / KV=fp16" -- so they don't collide with the existing
+   steps=200 points at the same energy. Recompute utility/compression_ratio
+   against the grid's own baseline_raw/baseline_bytes (pipeline.utility.
+   aggregate_utility + pipeline.compression.compression_ratio) rather than
+   trusting the ablation run's fresh (and now-discarded) dense pass, so
+   numbers are exactly comparable. Grid: 55 -> 57 points.
+2. New user request: extend the grid to E=0.80 and E=0.75 (lower energy =
+   higher compression), KV in {fp16, 4x4, 3x4, 3x2} (2x2 not requested this
+   time), LoRA-on only, at steps=1600 (per the ablation finding above --
+   user explicitly chose the higher budget over matching the grid's
+   steps=200 default, aware this makes E0.8/E0.75 not directly apples-to-
+   apples with the steps=200 points already in the grid; label will make
+   the step count explicit). E=0.85 is skipped entirely -- already fully
+   covered (all 5 KV configs, LoRA off+on) in the existing grid.
+3. run_pareto.py always evaluates a dense baseline point when `--lora both`
+   is passed but SKIPS it entirely under `--lora on` alone (its own guard:
+   "recovery-LoRA on the dense model is not a recovery point"), then
+   asserts baseline_raw is not None at the very end and crashes. Since we
+   already have the real dense baseline from the existing grid, don't waste
+   ~30min re-running dense on 4 KV configs just to satisfy the assert --
+   run with `--lora on` only, let the expected AssertionError happen after
+   all 8 points are checkpointed (save_checkpoint fires after every point
+   inside the loop, before the assert), then merge the resulting json
+   (baseline_raw=None, 8 raw points, complete=false) into the 57-point grid
+   exactly as in step 1, recomputing utility against the *real* baseline.
+   Command:
+     python -u run_pareto.py --energies 0.8 0.75 \
+       --kv-configs none,4x4,3x4,3x2 --lora on \
+       --lora-steps 1600 --lora-samples 8000 --gpus 1
+   (samples=8000 keeps the grid's established 5x-steps ratio, matching what
+   the ablation already used at steps=1600.)
+4. ETA basis (from the committed 55-grid's own timing): per-build overhead
+   (load+SCT+dispatch) ~410s, LoRA train at steps=1600 ~600-650s (matches
+   the ablation's measured 594s/646s), eval per KV config ~350-450s x 4 ~=
+   1500s. Per energy ~35-45 min; two energies (0.8, 0.75), one GPU, model
+   loaded once at a time (sequential) ~70-90 min baseline. Both GPUs were
+   observed at 98% utilization from other users' jobs at plan time (shared
+   HPC node, not ours to preempt) -- adds contention risk, budgeting
+   1.5-2.5h wall as the realistic range.
+5. After the run: merge 8 new points into the 57-grid (-> 65), regenerate
+   pareto_utility_vs_compression.png + both heatmaps + the printed table,
+   update iteration.txt with the E=0.8/0.75 findings and this session's
+   ablation-merge finding, update README's Results subsection, commit+push
+   (workspace rule 1) results_llama8b/ + path.txt + iteration.txt + README.
+
+=== 2026-07-12: LoRA-budget ablation at E0.85/E0.9 ===
+GOAL: test whether the utility gap left after recovery-LoRA (best real-
+compression point in the full grid was E0.9+LoRA/fp16 at U=0.591, ratio=
+1.075) is a LoRA training-budget artifact (default 200 steps / 1000-sample
+alpaca slice, ~0.8 epoch) or a genuine ceiling for SCT+LoRA at 8B.
+
+PLAN:
+1. Isolate the LoRA-recovery effect from KV quantization: run only
+   --kv-configs none (fp16 KV), --lora on, --energies 0.85 0.9, same eval
+   subset sizes as the full grid (ppl=2048, hellaswag=400, mmlu=400,
+   truthfulqa=200) so utility numbers are directly comparable to the
+   existing frontier. GPU 1 (GPU 0 is occupied by another user's job, 100%
+   util at time of writing).
+2. Sweep --lora-steps in {400, 800, 1600} (2x/4x/8x the default 200),
+   scaling --lora-samples proportionally (5x steps: 2000/4000/8000) so more
+   steps means more unique alpaca examples, not more epochs over the same
+   1000 -- avoids overfitting confound. rank/lr/batch left at defaults
+   (16/1e-4/4) since only the step budget is the ablation variable.
+   Estimated cost: ~23min + ~28min + ~39min sequential (~90 min total),
+   based on the measured 0.4s/lora-step and the full grid's per-point
+   build+eval overhead (~156s build, ~200s eval).
+3. run_pareto.py hardcodes its output path to results_llama8b/
+   pareto_results.json for this model -- each invocation would overwrite
+   the just-committed 55-point full-grid file. Back up the current file
+   first; after each ablation run, copy its output aside before the next
+   run overwrites it.
+4. Merge: recompute each ablation point's utility/compression_ratio against
+   the ORIGINAL full-grid baseline_raw/baseline_bytes (via
+   pipeline.utility.aggregate_utility + pipeline.compression.
+   compression_ratio) rather than trusting each run's own fresh dense pass,
+   so the numbers are exactly comparable to the existing frontier -- not
+   just close. Relabel each point with its step count (e.g. "E0.85+LoRA
+   (steps=800) / KV=fp16") since run_pareto's label format doesn't include
+   steps and would otherwise collide across the 3 runs. Append the 6 new
+   points to the full grid's 55 and restore pareto_results.json.
+5. Update iteration.txt with the ablation finding (does more LoRA budget
+   close the gap, plateau early, or not move the needle), and README if the
+   conclusion changes the "SCT doesn't pay off at 8B" finding from the full
+   grid. Commit + push per workspace rule 1.
+
+ADDENDUM (caught before wasting compute): `--lora on` alone skips the dense
+baseline point entirely (run_pareto.py:323, "recovery-LoRA on the dense
+model is not a recovery point"), but the script asserts baseline_raw is not
+None at the very end -- would have crashed after ~90min of GPU compute with
+nothing saved. Fixed by using `--lora both` instead: this runs the dense
+point once per invocation (lora=off only, cheap ~340s) alongside the E0.85/
+E0.9 LoRA-on ablation points, and also incidentally re-runs E0.85/E0.9
+LoRA-off as a free reproducibility check against the full grid's numbers.

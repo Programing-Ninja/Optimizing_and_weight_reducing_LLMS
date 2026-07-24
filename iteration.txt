@@ -715,3 +715,38 @@ NOT DONE / NEXT:
 - Consider a longer-LoRA-budget ablation at E0.85/E0.9 only (2-3 points,
   cheap) to test whether the gap closes with more recovery steps before
   concluding SCT doesn't pay off at 8B.
+
+=== 2026-07-24: LoRA-budget ablation (steps=1600 vs 200) — RESULT + grid merge ===
+RAN: E0.85+LoRA and E0.9+LoRA at steps=1600 (8x the grid's default 200),
+samples=8000 (kept the 5x-steps ratio), KV=fp16 only. This run was started
+in an earlier session and left uncommitted/unmerged; this session found the
+overwritten pareto_results.json (only these 5 points, full 55-grid gone
+from disk but safe in git history), backed it up, restored the 55-grid, and
+merged the 2 LoRA-on points in as new distinctly-labeled entries via the
+new merge_pareto.py (recomputes utility/compression_ratio against the
+grid's real baseline rather than trusting a fresh dense re-run). Grid: 55 ->
+57 points.
+
+RESULT: more LoRA budget substantially closes the recovery gap --
+  E0.9+LoRA/fp16:  steps=200 ppl=27.68,hs=0.632,mmlu=0.310 -> steps=1600
+                   ppl=16.08,hs=0.672,mmlu=0.443  (U 0.591->0.700)
+  E0.85+LoRA/fp16: steps=200 ppl=51.85,hs=0.497,mmlu=0.242 -> steps=1600
+                   ppl=25.65,hs=0.620,mmlu=0.352  (U 0.488->0.603)
+Both new points now land ON the Pareto frontier (57-point grid, 10 points
+on the frontier vs 12/55 before -- E0.9+LoRA(steps=1600)/fp16 is now the
+best real-compression point in the whole grid: U=0.700 at ratio=1.08,
+beating the old best (E0.9+LoRA/fp16 steps=200, U=0.591) by a wide margin
+at the SAME compression ratio).
+
+ANSWERS the 2026-07-12 open question: the utility gap after recovery-LoRA
+was PARTLY a training-budget artifact, not a hard scale-mismatch ceiling --
+8x the steps recovers meaningfully more utility at zero extra compression
+cost. Still doesn't fully close to dense (ppl 5.47), and doesn't overturn
+the broader finding that free 4-bit KV quantization alone still beats SCT's
+utility-per-byte at every energy tried so far -- but it does mean the
+"SCT doesn't pay off at 8B" conclusion should be qualified: it doesn't pay
+off *at the grid's default LoRA budget*, not unconditionally.
+
+NOT DONE / NEXT: extending the grid to E=0.80/0.75 (higher compression)
+with LoRA at steps=1600 is queued next (user request) -- see path.txt
+2026-07-24 entry for the run command and ETA.
